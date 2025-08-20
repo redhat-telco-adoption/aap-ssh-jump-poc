@@ -1,5 +1,5 @@
 ---
-# AAP Controller Provisioning Playbook - Enhanced Version
+# AAP Controller Provisioning Playbook
 # This playbook provides idempotent, production-ready AAP Controller configuration
 # 
 # Usage:
