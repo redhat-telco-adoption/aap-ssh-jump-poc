@@ -1,0 +1,94 @@
+- name: Apply basic security hardening
+  hosts: all
+  become: true
+  vars:
+    allowed_ssh_users:
+      - ec2-user
+      - ansible
+    disable_root_login: true
+    
+  tasks:
+    - name: Ensure firewall is installed (RHEL/CentOS)
+      ansible.builtin.yum:
+        name: firewalld
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Start and enable firewall
+      ansible.builtin.systemd:
+        name: firewalld
+        state: started
+        enabled: true
+      when: ansible_os_family == "RedHat"
+
+    - name: Configure SSH security
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin {{ "no" if disable_root_login else "yes" }}' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+        - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 3' }
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+      notify: restart_sshd
+
+    - name: Set up automatic security updates (RHEL/CentOS)
+      ansible.builtin.yum:
+        name: yum-cron
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Configure automatic security updates (RHEL/CentOS)
+      ansible.builtin.lineinfile:
+        path: /etc/yum/yum-cron.conf
+        regexp: '^update_cmd'
+        line: 'update_cmd = security'
+        backup: true
+      when: ansible_os_family == "RedHat"
+
+    - name: Enable yum-cron service
+      ansible.builtin.systemd:
+        name: yum-cron
+        state: started
+        enabled: true
+      when: ansible_os_family == "RedHat"
+
+    - name: Install fail2ban
+      ansible.builtin.package:
+        name: fail2ban
+        state: present
+
+    - name: Configure fail2ban for SSH
+      ansible.builtin.copy:
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          filter = sshd
+          logpath = /var/log/secure
+          maxretry = 3
+          bantime = 3600
+        dest: /etc/fail2ban/jail.local
+        backup: true
+      notify: restart_fail2ban
+
+    - name: Start and enable fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        state: started
+        enabled: true
+
+  handlers:
+    - name: restart_sshd
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted
+
+    - name: restart_fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        state: restarted

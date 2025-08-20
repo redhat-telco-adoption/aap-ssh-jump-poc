@@ -1,0 +1,32 @@
+- name: Gather system information
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Display system information
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Architecture: {{ ansible_architecture }}"
+          - "CPU Cores: {{ ansible_processor_vcpus }}"
+          - "Memory: {{ (ansible_memtotal_mb / 1024) | round(1) }} GB"
+          - "Uptime: {{ ansible_uptime_seconds | int // 3600 }} hours"
+
+    - name: Check disk usage
+      ansible.builtin.shell: df -h / | tail -1
+      register: disk_usage
+      changed_when: false
+
+    - name: Display disk usage
+      ansible.builtin.debug:
+        msg: "Root filesystem usage: {{ disk_usage.stdout.split()[4] }}"
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: "Reboot required: {{ 'Yes' if reboot_required.stat.exists else 'No' }}"

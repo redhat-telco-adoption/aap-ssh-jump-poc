@@ -1,0 +1,42 @@
+- name: Main site configuration
+  hosts: all
+  gather_facts: true
+  vars:
+    # Override these in AAP job template extra vars
+    apply_updates: false
+    apply_security: true
+    setup_monitoring: true
+    
+  tasks:
+    - name: Display deployment banner
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Starting deployment to {{ inventory_hostname }}"
+          - "Time: {{ ansible_date_time.iso8601 }}"
+          - "Apply updates: {{ apply_updates }}"
+          - "Apply security: {{ apply_security }}"
+          - "Setup monitoring: {{ setup_monitoring }}"
+          - "=========================================="
+
+    - name: Include system updates
+      ansible.builtin.include_tasks: system_updates.yml
+      when: apply_updates | bool
+
+    - name: Include security hardening
+      ansible.builtin.include_tasks: security_hardening.yml
+      when: apply_security | bool
+
+    - name: Include monitoring setup
+      ansible.builtin.include_tasks: monitoring_setup.yml
+      when: setup_monitoring | bool
+
+    - name: Final status check
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Deployment completed on {{ inventory_hostname }}"
+          - "System: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Uptime: {{ ansible_uptime_seconds | int // 3600 }} hours"
+          - "=========================================="

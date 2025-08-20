@@ -1,0 +1,133 @@
+# vars/defaults.yml - Default configuration values
+---
+# ===========================================
+# DEFAULT CONFIGURATION VALUES
+# ===========================================
+
+# Environment-specific organizations
+organizations:
+  development:
+    name: "Development"
+    description: "Development environment for testing"
+    max_hosts: 50
+  staging:
+    name: "Staging" 
+    description: "Staging environment for pre-production testing"
+    max_hosts: 100
+  production:
+    name: "Production"
+    description: "Production environment"
+    max_hosts: 0  # Unlimited
+
+# Default teams structure
+teams:
+  - name: "Infrastructure Team"
+    description: "Infrastructure automation and management"
+  - name: "Application Team"
+    description: "Application deployment and configuration"
+  - name: "Security Team"
+    description: "Security and compliance automation"
+
+# Credential definitions
+credentials:
+  managed_nodes:
+    name: "Managed Nodes SSH Key"
+    description: "SSH key for accessing managed nodes via jump host"
+    username: "ec2-user"
+  vault:
+    name: "Vault Credential"
+    description: "Ansible Vault credential for encrypted variables"
+
+# Default execution environments
+execution_environments:
+  - name: "Infrastructure EE"
+    description: "Execution environment with infrastructure tools"
+    image: "quay.io/ansible/automation-hub-ee:latest"
+    pull: "missing"
+  - name: "Security EE"
+    description: "Execution environment with security tools"
+    image: "quay.io/ansible/security-ee:latest"
+    pull: "missing"
+
+# Project definitions
+projects:
+  - name: "Demo Playbooks"
+    description: "Sample playbooks for testing infrastructure"
+    scm_type: "git"
+    scm_url: "https://github.com/ansible/ansible-examples.git"
+    scm_branch: "master"
+    scm_clean: true
+    scm_update_on_launch: true
+    timeout: 600
+
+# Inventory definitions
+inventories:
+  - name: "Managed Infrastructure"
+    description: "Managed nodes accessible via jump host"
+    variables:
+      ansible_python_interpreter: "/usr/bin/python3"
+      ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    groups:
+      - name: "managed_environment"
+        description: "Group containing all managed nodes"
+        variables:
+          node_type: "managed"
+          environment: "{{ environment | default('development') }}"
+
+# Job template definitions
+job_templates:
+  - name: "Ping All Managed Nodes"
+    description: "Test connectivity to all managed nodes"
+    project: "Demo Playbooks" 
+    playbook: "ping.yml"
+    inventory: "Managed Infrastructure"
+    credentials: ["Managed Nodes SSH Key"]
+    execution_environment: "Infrastructure EE"
+    timeout: 300
+    verbosity: 1
+    
+  - name: "System Information"
+    description: "Gather system information from managed nodes"
+    project: "Demo Playbooks"
+    playbook: "system_info.yml"
+    inventory: "Managed Infrastructure"
+    credentials: ["Managed Nodes SSH Key"]
+    execution_environment: "Infrastructure EE"
+    timeout: 600
+    ask_limit_on_launch: true
+    
+  - name: "System Updates"
+    description: "Apply system updates to managed nodes"
+    project: "Demo Playbooks"
+    playbook: "system_updates.yml"
+    inventory: "Managed Infrastructure"
+    credentials: ["Managed Nodes SSH Key"]
+    execution_environment: "Infrastructure EE"
+    timeout: 1800
+    become_enabled: true
+    ask_limit_on_launch: true
+    ask_variables_on_launch: true
+    extra_vars:
+      reboot_after_update: false
+    survey_enabled: true
+
+# Workflow template definitions
+workflow_templates:
+  - name: "Infrastructure Deployment Workflow"
+    description: "Complete infrastructure deployment and configuration workflow"
+    ask_variables_on_launch: true
+    extra_vars:
+      workflow_type: "deployment"
+
+# Notification templates
+notification_templates:
+  - name: "Email Notifications"
+    description: "Email notifications for job status"
+    type: "email"
+    # Configuration set per environment
+
+# Settings
+run_validation: true
+validation_job_template: "Ping All Managed Nodes"
+max_retries: 3
+retry_delay: 5

@@ -1,420 +1,396 @@
 ---
-# AAP Controller Provisioning Playbook
-# This playbook configures AAP Controller with inventories, credentials, projects, and job templates
+# AAP Controller Provisioning Playbook - Enhanced Version
+# This playbook provides idempotent, production-ready AAP Controller configuration
 # 
-# Prerequisites:
-# 1. AAP Controller is installed and accessible
-# 2. ansible.controller collection is installed: ansible-galaxy collection install ansible.controller
-# 3. Controller admin credentials are configured
-#
 # Usage:
-# ansible-playbook -i inventory/hosts.yml provision_aap_controller.yml -e controller_host=https://aap.yourdomain.com
+#   ansible-playbook provision_aap_controller.yml -e @vars/aap_controller_vars.yml
+#   ansible-playbook provision_aap_controller.yml -e @vars/environments/production.yml
 
 - name: Provision AAP Controller Configuration
   hosts: localhost
   gather_facts: false
+  vars_files:
+    - vars/defaults.yml
   vars:
-    # Controller connection settings - override with -e flags or in vars
-    controller_host: "{{ aap_public_url | default('https://aap.sandbox2957.opentlc.com') }}"
-    controller_username: "{{ aap_admin_user | default('admin') }}"
-    controller_password: "{{ aap_admin_password | default('changeme') }}"
-    controller_verify_ssl: "{{ aap_verify_ssl | default(false) }}"
+    # Connection settings with better defaults
+    controller_host: "{{ aap_public_url | default(lookup('env', 'CONTROLLER_HOST')) | default('https://localhost') }}"
+    controller_username: "{{ aap_admin_user | default(lookup('env', 'CONTROLLER_USERNAME')) | default('admin') }}"
+    controller_password: "{{ aap_admin_password | default(lookup('env', 'CONTROLLER_PASSWORD')) | default('changeme') }}"
+    controller_verify_ssl: "{{ aap_verify_ssl | default(true if 'production' in (environment | default('dev')) else false) }}"
     
-    # Organization settings
-    organization_name: "Default"
+    # Dynamic environment detection
+    environment: "{{ environment | default('development') }}"
+    organization_name: "{{ organizations[environment].name | default('Default') }}"
     
-    # Project settings - customize for your environment
-    project_scm_url: "https://github.com/ansible/ansible-examples.git"
-    project_scm_branch: "master"
-    
-    # Managed node configuration from inventory
-    jump_host_ip: "{{ hostvars[groups['jump_hosts'][0]]['aap_interface_ip'] if groups['jump_hosts'] is defined else '10.50.10.100' }}"
-    managed_nodes: "{{ groups['managed_nodes'] | default([]) }}"
+    # Enhanced error handling
+    max_retries: 3
+    retry_delay: 5
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - controller_host is defined
+          - controller_username is defined  
+          - controller_password is defined
+          - controller_host | regex_search('^https?://')
+        fail_msg: "Missing or invalid required variables. Check your configuration."
+
+    - name: Test AAP Controller connectivity
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/v2/ping/"
+        validate_certs: "{{ controller_verify_ssl }}"
+        timeout: 10
+      register: ping_result
+      retries: "{{ max_retries }}"
+      delay: "{{ retry_delay }}"
+      until: ping_result.status == 200
+
+    - name: Display environment information
+      ansible.builtin.debug:
+        msg:
+          - "Environment: {{ environment }}"
+          - "Controller: {{ controller_host }}"
+          - "Organization: {{ organization_name }}"
+          - "SSL Verification: {{ controller_verify_ssl }}"
 
   tasks:
-    - name: Verify ansible.controller collection is available
-      ansible.builtin.debug:
-        msg: "Starting AAP Controller provisioning..."
-
     # ===========================================
-    # CREDENTIALS CONFIGURATION
+    # ORGANIZATION MANAGEMENT
     # ===========================================
     
+    - name: Create/update organization
+      ansible.controller.organization:
+        name: "{{ organization_name }}"
+        description: "{{ organizations[environment].description | default('AAP Organization for ' + environment) }}"
+        max_hosts: "{{ organizations[environment].max_hosts | default(0) }}"
+        controller_host: "{{ controller_host }}"
+        controller_username: "{{ controller_username }}"
+        controller_password: "{{ controller_password }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        state: present
+      when: organization_name != "Default"
+
+    # ===========================================
+    # TEAMS AND USERS (if specified)
+    # ===========================================
+    
+    - name: Create teams
+      ansible.controller.team:
+        name: "{{ item.name }}"
+        description: "{{ item.description | default('') }}"
+        organization: "{{ organization_name }}"
+        controller_host: "{{ controller_host }}"
+        controller_username: "{{ controller_username }}"
+        controller_password: "{{ controller_password }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        state: present
+      loop: "{{ teams | default([]) }}"
+      tags: teams
+
+    # ===========================================
+    # CREDENTIALS WITH VALIDATION
+    # ===========================================
+    
+    - name: Verify SSH key file exists
+      ansible.builtin.stat:
+        path: "{{ ssh_key_path }}"
+      register: ssh_key_stat
+      vars:
+        ssh_key_path: "{{ ops_ssh_key | default('./keys/bastion_managed_key') }}"
+
     - name: Create SSH credential for managed nodes
       ansible.controller.credential:
-        name: "Managed Nodes SSH Key"
-        description: "SSH key for accessing managed nodes via jump host"
+        name: "{{ credentials.managed_nodes.name }}"
+        description: "{{ credentials.managed_nodes.description }}"
         organization: "{{ organization_name }}"
         credential_type: "Machine"
         inputs:
-          username: "ec2-user"
-          ssh_key_data: "{{ lookup('file', ops_ssh_key) | default(lookup('file', './keys/bastion_managed_key')) }}"
+          username: "{{ credentials.managed_nodes.username }}"
+          ssh_key_data: "{{ lookup('file', ssh_key_path) }}"
           ssh_key_unlock: ""
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
+      vars:
+        ssh_key_path: "{{ ops_ssh_key | default('./keys/bastion_managed_key') }}"
+      when: ssh_key_stat.stat.exists
 
-    - name: Create SCM credential for Git repositories (if using private repos)
+    - name: Create vault credential (if vault password provided)
       ansible.controller.credential:
-        name: "Git SCM Credential"
-        description: "Credential for accessing Git repositories"
+        name: "Vault Credential"
+        description: "Ansible Vault credential for encrypted variables"
         organization: "{{ organization_name }}"
-        credential_type: "Source Control"
+        credential_type: "Vault"
         inputs:
-          username: "git-user"
-          password: "{{ git_token | default('') }}"
+          vault_password: "{{ vault_password }}"
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
-      when: git_token is defined
+      when: vault_password is defined
+      no_log: true
 
     # ===========================================
-    # INVENTORY CONFIGURATION
+    # EXECUTION ENVIRONMENTS
     # ===========================================
+    
+    - name: Create execution environments
+      ansible.controller.execution_environment:
+        name: "{{ item.name }}"
+        description: "{{ item.description | default('') }}"
+        image: "{{ item.image }}"
+        pull: "{{ item.pull | default('missing') }}"
+        controller_host: "{{ controller_host }}"
+        controller_username: "{{ controller_username }}"
+        controller_password: "{{ controller_password }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        state: present
+      loop: "{{ execution_environments }}"
+      tags: execution_environments
 
-    - name: Create managed infrastructure inventory
-      ansible.controller.inventory:
-        name: "Managed Infrastructure"
-        description: "Managed nodes accessible via jump host"
+    # ===========================================
+    # PROJECTS WITH GIT VALIDATION
+    # ===========================================
+    
+    - name: Validate Git repositories accessibility
+      ansible.builtin.uri:
+        url: "{{ item.scm_url.replace('.git', '') if item.scm_url.endswith('.git') else item.scm_url }}"
+        method: HEAD
+        timeout: 10
+      loop: "{{ projects }}"
+      when: 
+        - item.scm_type == "git"
+        - not item.scm_url.startswith('git@')  # Skip SSH URLs
+      ignore_errors: true
+      register: git_validation
+
+    - name: Create projects
+      ansible.controller.project:
+        name: "{{ item.name }}"
+        description: "{{ item.description | default('') }}"
         organization: "{{ organization_name }}"
-        variables:
-          ansible_python_interpreter: "/usr/bin/python3"
-          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        scm_type: "{{ item.scm_type }}"
+        scm_url: "{{ item.scm_url }}"
+        scm_branch: "{{ item.scm_branch | default('main') }}"
+        scm_clean: "{{ item.scm_clean | default(true) }}"
+        scm_delete_on_update: "{{ item.scm_delete_on_update | default(false) }}"
+        scm_update_on_launch: "{{ item.scm_update_on_launch | default(true) }}"
+        scm_update_cache_timeout: "{{ item.scm_update_cache_timeout | default(300) }}"
+        credential: "{{ item.credential | default(omit) }}"
+        timeout: "{{ item.timeout | default(600) }}"
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
+      loop: "{{ projects }}"
+      register: project_creation
+      retries: 2
+      delay: 30
+      until: project_creation is succeeded
 
-    - name: Create managed_environment group
+    # ===========================================
+    # INVENTORIES WITH DYNAMIC HOSTS
+    # ===========================================
+    
+    - name: Create inventories
+      ansible.controller.inventory:
+        name: "{{ item.name }}"
+        description: "{{ item.description | default('') }}"
+        organization: "{{ organization_name }}"
+        variables: "{{ item.variables | default({}) }}"
+        controller_host: "{{ controller_host }}"
+        controller_username: "{{ controller_username }}"
+        controller_password: "{{ controller_password }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        state: present
+      loop: "{{ inventories }}"
+
+    - name: Create inventory groups
       ansible.controller.group:
-        name: "managed_environment"
-        description: "Group containing all managed nodes"
-        inventory: "Managed Infrastructure"
-        variables:
-          node_type: "managed"
-          environment: "production"
+        name: "{{ item.1.name }}"
+        description: "{{ item.1.description | default('') }}"
+        inventory: "{{ item.0.name }}"
+        variables: "{{ item.1.variables | default({}) }}"
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
+      with_subelements:
+        - "{{ inventories }}"
+        - groups
+        - skip_missing: true
 
-    - name: Add managed nodes to inventory
+    # Dynamic host creation from Terraform state or inventory
+    - name: Add hosts from managed_nodes group (if available)
       ansible.controller.host:
         name: "{{ hostvars[item]['inventory_hostname'] | default(item) }}"
         description: "Managed node {{ item }}"
-        inventory: "Managed Infrastructure"
+        inventory: "{{ inventory_name }}"
         variables:
           ansible_host: "{{ hostvars[item]['ansible_host'] | default(hostvars[item]['private_ip']) }}"
-          ansible_user: "ec2-user"
-          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyJump=ec2-user@{{ jump_host_ip }}"
-          node_type: "managed"
-          environment: "production"
-        groups:
-          - "managed_environment"
+          ansible_user: "{{ managed_node_user | default('ec2-user') }}"
+          ansible_ssh_common_args: "{{ managed_ssh_args }}"
+        groups: "{{ managed_node_groups }}"
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
-      loop: "{{ managed_nodes }}"
-      when: managed_nodes | length > 0
-
-    # Alternative: Import from YAML inventory file
-    - name: Import inventory from generated YAML file
-      ansible.controller.inventory_source:
-        name: "Imported Managed Nodes"
-        description: "Managed nodes imported from Terraform-generated inventory"
-        inventory: "Managed Infrastructure"
-        source: "file"
-        source_path: "/tmp/aap_automation_hosts.yml"
-        credential: null
-        update_on_launch: true
-        overwrite: true
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+      loop: "{{ groups['managed_nodes'] | default([]) }}"
+      vars:
+        inventory_name: "{{ inventories | selectattr('name', 'equalto', 'Managed Infrastructure') | map(attribute='name') | first }}"
+        managed_ssh_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyJump=ec2-user@{{ jump_host_ip }}"
+        managed_node_groups: ["managed_environment"]
+      when: 
+        - groups['managed_nodes'] is defined
+        - groups['managed_nodes'] | length > 0
 
     # ===========================================
-    # PROJECT CONFIGURATION
+    # JOB TEMPLATES WITH ENHANCED CONFIGURATION
     # ===========================================
-
-    - name: Create demo playbooks project
-      ansible.controller.project:
-        name: "Demo Playbooks"
-        description: "Sample playbooks for testing managed infrastructure"
-        organization: "{{ organization_name }}"
-        scm_type: "git"
-        scm_url: "{{ project_scm_url }}"
-        scm_branch: "{{ project_scm_branch }}"
-        scm_clean: true
-        scm_delete_on_update: true
-        scm_update_on_launch: true
-        scm_update_cache_timeout: 3600
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-
-    - name: Create custom playbooks project (for organization-specific content)
-      ansible.controller.project:
-        name: "Infrastructure Playbooks"
-        description: "Custom playbooks for infrastructure management"
-        organization: "{{ organization_name }}"
-        scm_type: "git"
-        scm_url: "{{ custom_project_scm_url | default('https://github.com/your-org/infrastructure-playbooks.git') }}"
-        scm_branch: "{{ custom_project_scm_branch | default('main') }}"
-        scm_clean: true
-        scm_delete_on_update: true
-        scm_update_on_launch: true
-        credential: "{{ 'Git SCM Credential' if git_token is defined else omit }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-      when: custom_project_scm_url is defined
-
-    # ===========================================
-    # EXECUTION ENVIRONMENT CONFIGURATION
-    # ===========================================
-
-    - name: Create custom execution environment
-      ansible.controller.execution_environment:
-        name: "Infrastructure EE"
-        description: "Execution environment with infrastructure tools"
-        image: "quay.io/ansible/automation-hub-ee:latest"
-        pull: "missing"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-
-    # ===========================================
-    # JOB TEMPLATE CONFIGURATION
-    # ===========================================
-
-    - name: Create ping test job template
+    
+    - name: Create job templates
       ansible.controller.job_template:
-        name: "Ping All Managed Nodes"
-        description: "Test connectivity to all managed nodes"
+        name: "{{ item.name }}"
+        description: "{{ item.description | default('') }}"
         organization: "{{ organization_name }}"
-        project: "Demo Playbooks"
-        playbook: "ping.yml"
-        inventory: "Managed Infrastructure"
-        credentials:
-          - "Managed Nodes SSH Key"
-        execution_environment: "Infrastructure EE"
-        job_type: "run"
-        verbosity: 1
-        timeout: 300
-        ask_variables_on_launch: false
-        concurrent_jobs_enabled: true
+        project: "{{ item.project }}"
+        playbook: "{{ item.playbook }}"
+        inventory: "{{ item.inventory }}"
+        credentials: "{{ item.credentials | default([]) }}"
+        execution_environment: "{{ item.execution_environment | default(omit) }}"
+        job_type: "{{ item.job_type | default('run') }}"
+        verbosity: "{{ item.verbosity | default(1) }}"
+        timeout: "{{ item.timeout | default(600) }}"
+        become_enabled: "{{ item.become_enabled | default(false) }}"
+        allow_simultaneous: "{{ item.allow_simultaneous | default(false) }}"
+        ask_limit_on_launch: "{{ item.ask_limit_on_launch | default(false) }}"
+        ask_variables_on_launch: "{{ item.ask_variables_on_launch | default(false) }}"
+        ask_tags_on_launch: "{{ item.ask_tags_on_launch | default(false) }}"
+        extra_vars: "{{ item.extra_vars | default({}) }}"
+        job_tags: "{{ item.job_tags | default('') }}"
+        skip_tags: "{{ item.skip_tags | default('') }}"
+        survey_enabled: "{{ item.survey_enabled | default(false) }}"
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
-
-    - name: Create system update job template
-      ansible.controller.job_template:
-        name: "System Updates"
-        description: "Apply system updates to managed nodes"
-        organization: "{{ organization_name }}"
-        project: "Demo Playbooks"
-        playbook: "system_updates.yml"
-        inventory: "Managed Infrastructure"
-        credentials:
-          - "Managed Nodes SSH Key"
-        execution_environment: "Infrastructure EE"
-        job_type: "run"
-        verbosity: 1
-        timeout: 1800
-        become_enabled: true
-        ask_limit_on_launch: true
-        ask_variables_on_launch: true
-        extra_vars:
-          reboot_after_update: false
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-
-    - name: Create configuration management job template
-      ansible.controller.job_template:
-        name: "Configure Managed Nodes"
-        description: "Apply configuration management to managed nodes"
-        organization: "{{ organization_name }}"
-        project: "Infrastructure Playbooks"
-        playbook: "site.yml"
-        inventory: "Managed Infrastructure"
-        credentials:
-          - "Managed Nodes SSH Key"
-        execution_environment: "Infrastructure EE"
-        job_type: "run"
-        verbosity: 1
-        timeout: 3600
-        become_enabled: true
-        ask_limit_on_launch: true
-        ask_variables_on_launch: true
-        ask_tags_on_launch: true
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-      when: custom_project_scm_url is defined
+      loop: "{{ job_templates }}"
+      tags: job_templates
 
     # ===========================================
-    # WORKFLOW TEMPLATE CONFIGURATION
+    # WORKFLOW TEMPLATES
     # ===========================================
-
-    - name: Create infrastructure workflow template
+    
+    - name: Create workflow job templates
       ansible.controller.workflow_job_template:
-        name: "Infrastructure Deployment Workflow"
-        description: "Complete infrastructure deployment and configuration workflow"
+        name: "{{ item.name }}"
+        description: "{{ item.description | default('') }}"
         organization: "{{ organization_name }}"
-        survey_enabled: false
-        ask_variables_on_launch: true
-        extra_vars:
-          workflow_type: "deployment"
+        survey_enabled: "{{ item.survey_enabled | default(false) }}"
+        ask_variables_on_launch: "{{ item.ask_variables_on_launch | default(false) }}"
+        extra_vars: "{{ item.extra_vars | default({}) }}"
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
-
-    - name: Add ping test to workflow
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Infrastructure Deployment Workflow"
-        unified_job_template: "Ping All Managed Nodes"
-        identifier: "ping-test"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-
-    - name: Add system updates to workflow
-      ansible.controller.workflow_job_template_node:
-        workflow_job_template: "Infrastructure Deployment Workflow"
-        unified_job_template: "System Updates"
-        identifier: "system-updates"
-        success_nodes:
-          - "ping-test"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+      loop: "{{ workflow_templates | default([]) }}"
+      register: workflow_creation
 
     # ===========================================
-    # SCHEDULE CONFIGURATION
+    # NOTIFICATIONS
     # ===========================================
-
-    - name: Create weekly system update schedule
-      ansible.controller.schedule:
-        name: "Weekly System Updates"
-        description: "Automated weekly system updates"
-        unified_job_template: "System Updates"
-        rrule: "DTSTART:20240101T020000Z RRULE:FREQ=WEEKLY;BYDAY=SU"
-        extra_data:
-          reboot_after_update: false
-          limit: "managed_environment"
-        enabled: false  # Start disabled for safety
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-
-    # ===========================================
-    # NOTIFICATIONS CONFIGURATION
-    # ===========================================
-
-    - name: Create email notification template
+    
+    - name: Create notification templates
       ansible.controller.notification_template:
-        name: "Infrastructure Alerts"
-        description: "Email notifications for infrastructure jobs"
+        name: "{{ item.name }}"
+        description: "{{ item.description | default('') }}"
         organization: "{{ organization_name }}"
-        notification_type: "email"
-        notification_configuration:
-          host: "{{ smtp_host | default('localhost') }}"
-          port: "{{ smtp_port | default(587) }}"
-          username: "{{ smtp_username | default('') }}"
-          password: "{{ smtp_password | default('') }}"
-          sender: "{{ notification_sender | default('aap-notifications@yourdomain.com') }}"
-          recipients:
-            - "{{ notification_recipient | default('admin@yourdomain.com') }}"
-          use_tls: true
+        notification_type: "{{ item.type }}"
+        notification_configuration: "{{ item.configuration }}"
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
         state: present
-      when: smtp_host is defined
+      loop: "{{ notification_templates | default([]) }}"
+      when: item.configuration is defined
+      tags: notifications
 
     # ===========================================
-    # VERIFICATION AND TESTING
+    # VALIDATION AND TESTING
     # ===========================================
-
-    - name: Launch ping test job to verify configuration
-      ansible.controller.job_launch:
-        job_template: "Ping All Managed Nodes"
-        inventory: "Managed Infrastructure"
+    
+    - name: Wait for project sync completion
+      ansible.controller.project:
+        name: "{{ item.name }}"
         wait: true
         timeout: 300
         controller_host: "{{ controller_host }}"
         controller_username: "{{ controller_username }}"
         controller_password: "{{ controller_password }}"
         validate_certs: "{{ controller_verify_ssl }}"
-      register: ping_job_result
+      loop: "{{ projects }}"
+      when: project_creation is changed
 
-    - name: Display job results
+    - name: Run validation job (if enabled)
+      ansible.controller.job_launch:
+        job_template: "{{ validation_job_template }}"
+        wait: true
+        timeout: 300
+        controller_host: "{{ controller_host }}"
+        controller_username: "{{ controller_username }}"
+        controller_password: "{{ controller_password }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+      register: validation_result
+      when: 
+        - run_validation | default(true)
+        - validation_job_template is defined
+
+  post_tasks:
+    - name: Display provisioning summary
       ansible.builtin.debug:
         msg:
-          - "AAP Controller provisioning completed successfully!"
-          - "Ping test job {{ ping_job_result.id }} status: {{ ping_job_result.status }}"
+          - "=== AAP Controller Provisioning Summary ==="
+          - "Environment: {{ environment }}"
           - "Controller URL: {{ controller_host }}"
+          - "Organization: {{ organization_name }}"
+          - "Projects created: {{ projects | length }}"
+          - "Job templates created: {{ job_templates | length }}"
+          - "Workflows created: {{ workflow_templates | default([]) | length }}"
           - ""
-          - "Created Resources:"
-          - "  - Inventory: Managed Infrastructure"
-          - "  - Credential: Managed Nodes SSH Key"
-          - "  - Project: Demo Playbooks"
-          - "  - Job Templates: Ping Test, System Updates"
-          - "  - Workflow: Infrastructure Deployment Workflow"
+          - "Validation job: {{ 'PASSED' if validation_result.status | default('') == 'successful' else 'SKIPPED' }}"
           - ""
-          - "Next Steps:"
-          - "  1. Review and test job templates in AAP UI"
-          - "  2. Configure additional playbooks in your projects"
-          - "  3. Enable schedules as needed"
-          - "  4. Set up notification recipients"
+          - "Next steps:"
+          - "1. Review created resources in AAP Controller UI"
+          - "2. Test job templates manually"
+          - "3. Configure additional RBAC if needed"
+          - "4. Set up monitoring and alerting"
 
-  # ===========================================
-  # ERROR HANDLING
-  # ===========================================
-  
   rescue:
-    - name: Display error information
+    - name: Display detailed error information
       ansible.builtin.debug:
         msg:
-          - "AAP Controller provisioning failed!"
-          - "Please check:"
-          - "  - Controller connectivity: {{ controller_host }}"
-          - "  - Admin credentials are correct"
-          - "  - ansible.controller collection is installed"
-          - "  - Network access to AAP Controller"
-      
-    - name: Fail the playbook
+          - "=== AAP Controller Provisioning FAILED ==="
+          - "Error occurred during provisioning"
+          - "Environment: {{ environment | default('unknown') }}"
+          - "Controller: {{ controller_host | default('unknown') }}"
+          - ""
+          - "Common troubleshooting steps:"
+          - "1. Verify controller connectivity: curl -k {{ controller_host }}/api/v2/ping/"
+          - "2. Check credentials are correct"
+          - "3. Ensure ansible.controller collection is installed"
+          - "4. Verify SSL certificate settings"
+          - "5. Check network connectivity and firewall rules"
+
+    - name: Fail with error context
       ansible.builtin.fail:
-        msg: "AAP Controller provisioning failed. Check the error messages above."
+        msg: "AAP Controller provisioning failed. See debug output above for details."

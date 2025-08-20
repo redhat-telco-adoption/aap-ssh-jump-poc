@@ -1,0 +1,70 @@
+- name: Set up basic monitoring
+  hosts: all
+  become: true
+  tasks:
+    - name: Install monitoring tools
+      ansible.builtin.package:
+        name:
+          - htop
+          - iotop
+          - nethogs
+          - ncdu
+          - tree
+        state: present
+
+    - name: Create monitoring script
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          # Basic system monitoring script
+          
+          echo "=== System Monitoring Report - $(date) ==="
+          echo
+          
+          echo "=== System Load ==="
+          uptime
+          echo
+          
+          echo "=== Memory Usage ==="
+          free -h
+          echo
+          
+          echo "=== Disk Usage ==="
+          df -h
+          echo
+          
+          echo "=== Top Processes by CPU ==="
+          ps aux --sort=-%cpu | head -10
+          echo
+          
+          echo "=== Top Processes by Memory ==="
+          ps aux --sort=-%mem | head -10
+          echo
+          
+          echo "=== Network Connections ==="
+          ss -tuln | grep LISTEN
+          echo
+        dest: /usr/local/bin/system-report.sh
+        mode: '0755'
+
+    - name: Create daily monitoring cron job
+      ansible.builtin.cron:
+        name: "Daily system monitoring report"
+        minute: "0"
+        hour: "6"
+        job: "/usr/local/bin/system-report.sh > /var/log/daily-system-report.log 2>&1"
+        user: root
+
+    - name: Set up log rotation for monitoring reports
+      ansible.builtin.copy:
+        content: |
+          /var/log/daily-system-report.log {
+              daily
+              rotate 30
+              compress
+              delaycompress
+              missingok
+              notifempty
+              copytruncate
+          }
+        dest: /etc/logrotate.d/system-report

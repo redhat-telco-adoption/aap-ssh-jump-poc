@@ -1,0 +1,14 @@
+---
+- name: Test connectivity to managed nodes
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ping test
+      ansible.builtin.ping:
+      
+    - name: Display connection info
+      ansible.builtin.debug:
+        msg:
+          - "Successfully connected to {{ inventory_hostname }}"
+          - "IP Address: {{ ansible_host }}"
+          - "Connection via: {{ ansible_ssh_common_args | default('direct') }}"
