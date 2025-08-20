@@ -8,10 +8,11 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws   = { source = "hashicorp/aws",   version = ">= 5.0" }
-    tls   = { source = "hashicorp/tls",   version = ">= 4.0" }
-    local = { source = "hashicorp/local", version = ">= 2.4" }
-    null  = { source = "hashicorp/null",  version = ">= 3.2" }
+    aws    = { source = "hashicorp/aws",    version = ">= 5.0" }
+    tls    = { source = "hashicorp/tls",    version = ">= 4.0" }
+    local  = { source = "hashicorp/local",  version = ">= 2.4" }
+    null   = { source = "hashicorp/null",   version = ">= 3.2" }
+    random = { source = "hashicorp/random", version = ">= 3.4" }
   }
 }
 
@@ -94,10 +95,78 @@ variable "managed_root_volume_size" {
   default = 30
 }
 
+# AAP Installation Variables
+variable "aap_admin_password" {
+  description = "AAP admin password (change in production)"
+  type        = string
+  default     = "redhat123"
+  sensitive   = true
+}
+
+variable "registry_username" {
+  description = "Red Hat registry username"
+  type        = string
+  default     = ""
+}
+
+variable "registry_password" {
+  description = "Red Hat registry password or token"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "generate_random_passwords" {
+  description = "Generate random passwords for AAP components"
+  type        = bool
+  default     = true
+}
+
 locals {
   name_prefix      = "aap25-poc"
   aap_fqdn         = "${var.aap_hostname}.${var.route53_zone_name}"
   az_index_primary = 0
+  
+  # Generate random passwords if enabled
+  pg_password = var.generate_random_passwords ? random_password.pg_password[0].result : "redhat123"
+  postgresql_admin_password = var.generate_random_passwords ? random_password.postgresql_admin_password[0].result : "redhat123"
+  automationhub_admin_password = var.generate_random_passwords ? random_password.automationhub_admin_password[0].result : "redhat123"
+  automationhub_pg_password = var.generate_random_passwords ? random_password.automationhub_pg_password[0].result : "redhat123"
+  sso_admin_password = var.generate_random_passwords ? random_password.sso_admin_password[0].result : "redhat123"
+}
+
+############################
+# Random passwords for AAP
+############################
+
+resource "random_password" "pg_password" {
+  count   = var.generate_random_passwords ? 1 : 0
+  length  = 16
+  special = false
+}
+
+resource "random_password" "postgresql_admin_password" {
+  count   = var.generate_random_passwords ? 1 : 0
+  length  = 16
+  special = false
+}
+
+resource "random_password" "automationhub_admin_password" {
+  count   = var.generate_random_passwords ? 1 : 0
+  length  = 16
+  special = false
+}
+
+resource "random_password" "automationhub_pg_password" {
+  count   = var.generate_random_passwords ? 1 : 0
+  length  = 16
+  special = false
+}
+
+resource "random_password" "sso_admin_password" {
+  count   = var.generate_random_passwords ? 1 : 0
+  length  = 16
+  special = false
 }
 
 ############################
@@ -693,6 +762,12 @@ resource "null_resource" "inventory_dir" {
   provisioner "local-exec" { command = "mkdir -p ./inventory" }
 }
 
+# Create ansible directory for AAP installation files
+resource "null_resource" "ansible_dir" {
+  depends_on = [null_resource.templates_dir]
+  provisioner "local-exec" { command = "mkdir -p ./ansible" }
+}
+
 # Generate the Ansible inventory file
 resource "local_file" "ansible_inventory" {
   depends_on = [null_resource.inventory_dir]
@@ -744,6 +819,26 @@ resource "local_file" "aap_automation_inventory" {
   })
 }
 
+# Generate AAP installation inventory
+resource "local_sensitive_file" "aap_install_inventory" {
+  depends_on = [null_resource.ansible_dir]
+  filename   = "./ansible/aap_install_inventory"
+  content = templatefile("${path.module}/templates/aap_install_inventory.tpl", {
+    aap_private_ip = aws_instance.aap.private_ip
+    exec_private_ip = aws_instance.exec.private_ip
+    aap_fqdn = local.aap_fqdn
+    aap_admin_password = var.aap_admin_password
+    pg_password = local.pg_password
+    postgresql_admin_password = local.postgresql_admin_password
+    registry_username = var.registry_username
+    registry_password = var.registry_password
+    automationhub_admin_password = local.automationhub_admin_password
+    automationhub_pg_password = local.automationhub_pg_password
+    sso_admin_password = local.sso_admin_password
+  })
+  file_permission = "0600"
+}
+
 # Generate connection testing playbook
 resource "local_file" "test_connections_playbook" {
   depends_on = [null_resource.inventory_dir]
@@ -766,6 +861,172 @@ resource "local_file" "inventory_readme" {
     jump_managed_ip = aws_network_interface.jump_managed.private_ip
     managed_instances = aws_instance.managed
   })
+}
+
+# Generate AAP bundle transfer playbook
+resource "local_file" "aap_transfer_playbook" {
+  depends_on = [null_resource.ansible_dir]
+  filename   = "./ansible/transfer_aap_bundle.yml"
+  content = templatefile("${path.module}/templates/transfer_aap_bundle.tpl", {
+    name_prefix = local.name_prefix
+    exec_private_ip = aws_instance.exec.private_ip
+    aap_fqdn = local.aap_fqdn
+  })
+}
+
+# Generate AAP installation README
+resource "local_file" "aap_install_readme" {
+  depends_on = [null_resource.ansible_dir]
+  filename   = "./ansible/README.md"
+  content = <<-EOT
+# AAP Installation Directory
+
+This directory contains the files needed for AAP 2.5 installation.
+
+## Files
+
+- **`aap_install_inventory`** - AAP installation inventory file
+- **`transfer_aap_bundle.yml`** - Playbook to transfer files to AAP host
+- **AAP bundle** - Place your downloaded AAP bundle here (e.g., `ansible-automation-platform-setup-bundle-2.5-1.tar.gz`)
+
+## Installation Process
+
+### 1. Download AAP Bundle
+Download the AAP 2.5 setup bundle from Red Hat Customer Portal and place it in this directory:
+```bash
+# Example filename (adjust version as needed)
+wget -O ansible/ansible-automation-platform-setup-bundle-2.5-1.tar.gz [YOUR_DOWNLOAD_URL]
+```
+
+### 2. Transfer Files to AAP Host
+```bash
+# Use the automated transfer playbook
+ansible-playbook -i inventory/hosts.yml ansible/transfer_aap_bundle.yml
+
+# Or manually transfer
+scp -F inventory/ssh_config ansible/aap_install_inventory aap:/tmp/aap_install/
+scp -F inventory/ssh_config ansible/ansible-automation-platform-setup-bundle-*.tar.gz aap:/tmp/aap_install/
+```
+
+### 3. Run AAP Installation
+```bash
+# SSH to AAP host
+ssh -F inventory/ssh_config aap
+
+# Run the installation preparation script
+sudo /tmp/aap_install/install_aap.sh
+
+# Navigate to extracted directory and install
+cd /tmp/aap_install/ansible-automation-platform-setup-bundle-*
+sudo ./setup.sh
+```
+
+## Alternative: Manual Installation Steps
+
+```bash
+# SSH to AAP host
+ssh -F inventory/ssh_config aap
+
+# Navigate to installation directory
+cd /tmp/aap_install
+
+# Extract bundle
+tar -xzf ansible-automation-platform-setup-bundle-*.tar.gz
+cd ansible-automation-platform-setup-bundle-*
+
+# Copy inventory file
+cp ../aap_install_inventory inventory
+
+# Run installation
+sudo ./setup.sh
+```
+
+## Installation Credentials
+
+- **Admin Username**: admin
+- **Admin Password**: ${var.aap_admin_password}
+- **Database Passwords**: Auto-generated (check aap_install_inventory file)
+- **Registry Credentials**: Configure in terraform.tfvars if using private registry
+
+## Post-Installation Setup
+
+### 1. Access AAP Controller
+```bash
+# Open in browser
+open https://${local.aap_fqdn}
+
+# Login with admin credentials
+```
+
+### 2. Configure AAP Controller
+```bash
+# Run the controller provisioning playbook
+ansible-playbook -i inventory/hosts.yml ansible/provision_aap_controller.yml \
+  -e @ansible/aap_controller_vars.yml
+```
+
+### 3. Test Managed Node Connectivity
+```bash
+# Test connections through AAP
+ansible-playbook -i inventory/hosts.yml inventory/test_connections.yml
+```
+
+## Troubleshooting
+
+### Installation Issues
+```bash
+# Check AAP host system resources
+ssh -F inventory/ssh_config aap "free -h && df -h"
+
+# Check installation logs
+ssh -F inventory/ssh_config aap "sudo tail -f /var/log/ansible-automation-platform-installer/*.log"
+
+# Verify execution node connectivity
+ssh -F inventory/ssh_config aap "nc -z ${aws_instance.exec.private_ip} 22"
+```
+
+### Post-Installation Issues
+```bash
+# Check AAP services
+ssh -F inventory/ssh_config aap "sudo systemctl status automation-controller"
+
+# Check database connectivity
+ssh -F inventory/ssh_config aap "sudo -u awx psql -h localhost -d awx -c 'SELECT 1;'"
+
+# Verify SSL certificate
+curl -I https://${local.aap_fqdn}
+```
+
+## Security Notes
+
+- The inventory file contains sensitive passwords and is marked as sensitive
+- Change default passwords in production environments
+- Ensure SSH keys have proper permissions (0600)
+- Consider using ansible-vault for sensitive variables in production
+- The installation uses generated random passwords for database components
+- Registry credentials are optional but recommended for Red Hat registry access
+
+## Performance Tuning
+
+The AAP host is provisioned with ${var.instance_type} instance type and ${var.aap_root_volume_size}GB storage.
+For production workloads, consider:
+
+- Increasing instance size for higher job concurrency
+- Using dedicated PostgreSQL instance for better performance
+- Configuring external storage for job artifacts
+- Setting up load balancing for multiple controller nodes
+
+## Registry Configuration
+
+If you have Red Hat registry credentials, add them to your terraform.tfvars:
+
+```hcl
+registry_username = "your-username"
+registry_password = "your-token"
+```
+
+Then re-run terraform apply to update the installation inventory.
+EOT
 }
 
 #################
@@ -812,14 +1073,38 @@ output "ssh_key_paths" {
   sensitive = true
 }
 
+output "aap_installation" {
+  description = "AAP installation information"
+  value = {
+    install_inventory = local_sensitive_file.aap_install_inventory.filename
+    admin_password = var.aap_admin_password
+    aap_fqdn = local.aap_fqdn
+    installation_commands = [
+      "# 1. Transfer AAP bundle and inventory to AAP host:",
+      "scp -F inventory/ssh_config ansible/aap_install_inventory aap:/tmp/",
+      "scp -F inventory/ssh_config ansible/ansible-automation-platform-setup-bundle-*.tar.gz aap:/tmp/",
+      "",
+      "# 2. SSH to AAP host and install:",
+      "ssh -F inventory/ssh_config aap",
+      "cd /tmp && tar -xzf ansible-automation-platform-setup-bundle-*.tar.gz",
+      "cd ansible-automation-platform-setup-bundle-* && cp /tmp/aap_install_inventory inventory",
+      "sudo ./setup.sh"
+    ]
+  }
+  sensitive = true
+}
+
 output "inventory_files" {
   description = "Generated inventory and configuration files"
   value = {
     ansible_inventory    = local_file.ansible_inventory.filename
     ssh_config          = local_file.ssh_config.filename
     aap_automation      = local_file.aap_automation_inventory.filename
+    aap_install         = local_sensitive_file.aap_install_inventory.filename
+    aap_transfer        = local_file.aap_transfer_playbook.filename
     test_playbook       = local_file.test_connections_playbook.filename
     inventory_readme    = local_file.inventory_readme.filename
+    aap_install_readme  = local_file.aap_install_readme.filename
   }
 }
 
@@ -831,5 +1116,7 @@ output "quick_start_commands" {
     ssh_to_aap       = "ssh -F ./inventory/ssh_config aap"
     ssh_to_jump      = "ssh -F ./inventory/ssh_config jump"
     ping_all_hosts   = "ansible all -i ./inventory/hosts.yml -m ping"
+    transfer_aap     = "ansible-playbook -i ./inventory/hosts.yml ./ansible/transfer_aap_bundle.yml"
+    install_aap      = "# See ./ansible/README.md for complete AAP installation instructions"
   }
 }
