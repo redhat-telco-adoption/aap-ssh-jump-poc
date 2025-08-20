@@ -1,7 +1,7 @@
 ---
 # Test Connections Playbook
 # Tests all connection paths in the AAP infrastructure
-# Usage: ansible-playbook -i inventory/hosts.yml inventory/test_connections.yml
+# Usage: ansible-playbook -i working/inventory/hosts.yml working/inventory/test_connections.yml
 
 - name: Test Bastion Connection
   hosts: bastion
@@ -14,8 +14,8 @@
         msg: 
           - "Bastion Host: {{ inventory_hostname }}"
           - "Public IP: {{ ansible_host }}"
-          - "Private IP: {{ private_ip }}"
           - "Role: {{ role }}"
+          - "SSH User: {{ ansible_user }}"
 
 - name: Test AAP Infrastructure
   hosts: aap_infrastructure
@@ -27,9 +27,9 @@
       debug:
         msg:
           - "Host: {{ inventory_hostname }}"
-          - "Private IP: {{ ansible_host }}"
+          - "Ansible Host: {{ ansible_host }}"
           - "Role: {{ role }}"
-          - "Subnet: {{ subnet_type }}"
+          - "Access Method: {{ access_method }}"
 
 - name: Test Jump Host
   hosts: jump_hosts
@@ -65,9 +65,9 @@
       debug:
         msg:
           - "Managed Node: {{ inventory_hostname }}"
-          - "Private IP: {{ ansible_host }}"
+          - "Ansible Host: {{ ansible_host }}"
           - "Role: {{ role }}"
-          - "Subnet: {{ subnet_type }}"
+          - "Access Method: {{ access_method }}"
 
 - name: Connection Summary
   hosts: localhost
@@ -87,5 +87,5 @@
           - "  Admin → Bastion → AAP/Exec/Jump"
           - "  AAP Jobs → Jump → Managed Nodes"
           - ""
-          - "SSH Config: Use ./inventory/ssh_config for direct SSH access"
-          - "AAP Inventory: Import ./inventory/aap_automation_hosts.yml into AAP Controller"
+          - "SSH Config: Use working/inventory/ssh_config for direct SSH access"
+          - "AAP Inventory: Import working/inventory/aap_automation_hosts.yml into AAP Controller"

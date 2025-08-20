@@ -11,8 +11,10 @@ all:
           ansible_host: ${bastion_public_ip}
           ansible_user: ec2-user
           ansible_ssh_private_key_file: ${ops_key_path}
-          ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
+          ansible_ssh_common_args: '-F working/inventory/ssh_config'
           role: bastion
+          public_ip: ${bastion_public_ip}
+          private_ip: ${bastion_private_ip}
           
     # AAP Infrastructure 
     aap_infrastructure:
@@ -21,23 +23,27 @@ all:
           hosts:
             ${name_prefix}-aap:
               ansible_host: aap
-              ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
+              ansible_ssh_common_args: '-F working/inventory/ssh_config'
               aap_url: https://${aap_fqdn}
               role: aap-controller
+              private_ip: ${aap_private_ip}
+              subnet_type: aap
               
         execution_nodes:
           hosts:
             ${name_prefix}-exec:
               ansible_host: exec
-              ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
+              ansible_ssh_common_args: '-F working/inventory/ssh_config'
               role: execution-node
+              private_ip: ${exec_private_ip}
+              subnet_type: aap
               
     # Jump Host (Network Bridge)
     jump_hosts:
       hosts:
         ${name_prefix}-jump:
           ansible_host: jump
-          ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
+          ansible_ssh_common_args: '-F working/inventory/ssh_config'
           aap_interface_ip: ${jump_aap_ip}
           managed_interface_ip: ${jump_managed_ip}
           role: jump-host
@@ -48,8 +54,10 @@ all:
 %{ for i, node in managed_nodes ~}
         ${node.name}:
           ansible_host: managed-${i}
-          ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
+          ansible_ssh_common_args: '-F working/inventory/ssh_config'
           role: managed-node
+          private_ip: ${node.ip}
+          subnet_type: managed
 %{ endfor ~}
           
   vars:
