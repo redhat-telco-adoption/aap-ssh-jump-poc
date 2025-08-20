@@ -1,0 +1,369 @@
+# ===========================================
+# ping.yml - Basic connectivity test
+# ===========================================
+---
+- name: Test connectivity to managed nodes
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ping test
+      ansible.builtin.ping:
+      
+    - name: Display connection info
+      ansible.builtin.debug:
+        msg:
+          - "Successfully connected to {{ inventory_hostname }}"
+          - "IP Address: {{ ansible_host }}"
+          - "Connection via: {{ ansible_ssh_common_args | default('direct') }}"
+
+---
+# ===========================================
+# system_info.yml - Gather system information
+# ===========================================
+- name: Gather system information
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Display system information
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Architecture: {{ ansible_architecture }}"
+          - "CPU Cores: {{ ansible_processor_vcpus }}"
+          - "Memory: {{ (ansible_memtotal_mb / 1024) | round(1) }} GB"
+          - "Uptime: {{ ansible_uptime_seconds | int // 3600 }} hours"
+
+    - name: Check disk usage
+      ansible.builtin.shell: df -h / | tail -1
+      register: disk_usage
+      changed_when: false
+
+    - name: Display disk usage
+      ansible.builtin.debug:
+        msg: "Root filesystem usage: {{ disk_usage.stdout.split()[4] }}"
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: "Reboot required: {{ 'Yes' if reboot_required.stat.exists else 'No' }}"
+
+---
+# ===========================================
+# system_updates.yml - Apply system updates
+# ===========================================
+- name: Apply system updates
+  hosts: all
+  become: true
+  vars:
+    reboot_after_update: false
+    update_timeout: 1800
+    
+  tasks:
+    - name: Update package cache (RHEL/CentOS)
+      ansible.builtin.yum:
+        update_cache: true
+      when: ansible_os_family == "RedHat"
+
+    - name: Update package cache (Ubuntu/Debian)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Get list of available updates (RHEL/CentOS)
+      ansible.builtin.yum:
+        list: updates
+      register: yum_updates
+      when: ansible_os_family == "RedHat"
+
+    - name: Display available updates (RHEL/CentOS)
+      ansible.builtin.debug:
+        msg: "{{ yum_updates.results | length }} updates available"
+      when: ansible_os_family == "RedHat"
+
+    - name: Apply all updates (RHEL/CentOS)
+      ansible.builtin.yum:
+        name: "*"
+        state: latest
+        update_only: true
+      async: "{{ update_timeout }}"
+      poll: 30
+      register: yum_result
+      when: ansible_os_family == "RedHat"
+
+    - name: Apply all updates (Ubuntu/Debian)
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: true
+        autoremove: true
+        autoclean: true
+      async: "{{ update_timeout }}"
+      poll: 30
+      register: apt_result
+      when: ansible_os_family == "Debian"
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Check for kernel updates (RHEL/CentOS)
+      ansible.builtin.shell: |
+        if [[ $(rpm -q kernel | tail -1) != $(uname -r) ]]; then
+          echo "kernel_updated"
+        fi
+      register: kernel_check
+      changed_when: false
+      when: ansible_os_family == "RedHat"
+
+    - name: Set reboot required fact
+      ansible.builtin.set_fact:
+        needs_reboot: "{{ 
+          reboot_required_file.stat.exists or 
+          (kernel_check is defined and 'kernel_updated' in kernel_check.stdout) 
+        }}"
+
+    - name: Display update results
+      ansible.builtin.debug:
+        msg:
+          - "Updates completed on {{ inventory_hostname }}"
+          - "Reboot required: {{ 'Yes' if needs_reboot else 'No' }}"
+          - "Reboot scheduled: {{ 'Yes' if (reboot_after_update and needs_reboot) else 'No' }}"
+
+    - name: Reboot if required and requested
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+        test_command: uptime
+      when: reboot_after_update and needs_reboot
+
+    - name: Wait for system to be ready after reboot
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      when: reboot_after_update and needs_reboot
+
+---
+# ===========================================
+# security_hardening.yml - Basic security hardening
+# ===========================================
+- name: Apply basic security hardening
+  hosts: all
+  become: true
+  vars:
+    allowed_ssh_users:
+      - ec2-user
+      - ansible
+    disable_root_login: true
+    
+  tasks:
+    - name: Ensure firewall is installed (RHEL/CentOS)
+      ansible.builtin.yum:
+        name: firewalld
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Start and enable firewall
+      ansible.builtin.systemd:
+        name: firewalld
+        state: started
+        enabled: true
+      when: ansible_os_family == "RedHat"
+
+    - name: Configure SSH security
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin {{ "no" if disable_root_login else "yes" }}' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+        - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 3' }
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+      notify: restart_sshd
+
+    - name: Set up automatic security updates (RHEL/CentOS)
+      ansible.builtin.yum:
+        name: yum-cron
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Configure automatic security updates (RHEL/CentOS)
+      ansible.builtin.lineinfile:
+        path: /etc/yum/yum-cron.conf
+        regexp: '^update_cmd'
+        line: 'update_cmd = security'
+        backup: true
+      when: ansible_os_family == "RedHat"
+
+    - name: Enable yum-cron service
+      ansible.builtin.systemd:
+        name: yum-cron
+        state: started
+        enabled: true
+      when: ansible_os_family == "RedHat"
+
+    - name: Install fail2ban
+      ansible.builtin.package:
+        name: fail2ban
+        state: present
+
+    - name: Configure fail2ban for SSH
+      ansible.builtin.copy:
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          filter = sshd
+          logpath = /var/log/secure
+          maxretry = 3
+          bantime = 3600
+        dest: /etc/fail2ban/jail.local
+        backup: true
+      notify: restart_fail2ban
+
+    - name: Start and enable fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        state: started
+        enabled: true
+
+  handlers:
+    - name: restart_sshd
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted
+
+    - name: restart_fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        state: restarted
+
+---
+# ===========================================
+# monitoring_setup.yml - Basic monitoring setup
+# ===========================================
+- name: Set up basic monitoring
+  hosts: all
+  become: true
+  tasks:
+    - name: Install monitoring tools
+      ansible.builtin.package:
+        name:
+          - htop
+          - iotop
+          - nethogs
+          - ncdu
+          - tree
+        state: present
+
+    - name: Create monitoring script
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          # Basic system monitoring script
+          
+          echo "=== System Monitoring Report - $(date) ==="
+          echo
+          
+          echo "=== System Load ==="
+          uptime
+          echo
+          
+          echo "=== Memory Usage ==="
+          free -h
+          echo
+          
+          echo "=== Disk Usage ==="
+          df -h
+          echo
+          
+          echo "=== Top Processes by CPU ==="
+          ps aux --sort=-%cpu | head -10
+          echo
+          
+          echo "=== Top Processes by Memory ==="
+          ps aux --sort=-%mem | head -10
+          echo
+          
+          echo "=== Network Connections ==="
+          ss -tuln | grep LISTEN
+          echo
+        dest: /usr/local/bin/system-report.sh
+        mode: '0755'
+
+    - name: Create daily monitoring cron job
+      ansible.builtin.cron:
+        name: "Daily system monitoring report"
+        minute: "0"
+        hour: "6"
+        job: "/usr/local/bin/system-report.sh > /var/log/daily-system-report.log 2>&1"
+        user: root
+
+    - name: Set up log rotation for monitoring reports
+      ansible.builtin.copy:
+        content: |
+          /var/log/daily-system-report.log {
+              daily
+              rotate 30
+              compress
+              delaycompress
+              missingok
+              notifempty
+              copytruncate
+          }
+        dest: /etc/logrotate.d/system-report
+
+---
+# ===========================================
+# site.yml - Main site playbook
+# ===========================================
+- name: Main site configuration
+  hosts: all
+  gather_facts: true
+  vars:
+    # Override these in AAP job template extra vars
+    apply_updates: false
+    apply_security: true
+    setup_monitoring: true
+    
+  tasks:
+    - name: Display deployment banner
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Starting deployment to {{ inventory_hostname }}"
+          - "Time: {{ ansible_date_time.iso8601 }}"
+          - "Apply updates: {{ apply_updates }}"
+          - "Apply security: {{ apply_security }}"
+          - "Setup monitoring: {{ setup_monitoring }}"
+          - "=========================================="
+
+    - name: Include system updates
+      ansible.builtin.include_tasks: system_updates.yml
+      when: apply_updates | bool
+
+    - name: Include security hardening
+      ansible.builtin.include_tasks: security_hardening.yml
+      when: apply_security | bool
+
+    - name: Include monitoring setup
+      ansible.builtin.include_tasks: monitoring_setup.yml
+      when: setup_monitoring | bool
+
+    - name: Final status check
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Deployment completed on {{ inventory_hostname }}"
+          - "System: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Uptime: {{ ansible_uptime_seconds | int // 3600 }} hours"
+          - "=========================================="

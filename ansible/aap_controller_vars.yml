@@ -1,0 +1,99 @@
+# AAP Controller Configuration Variables
+# Copy this file to 'aap_controller_vars.yml' and customize for your environment
+
+# ===========================================
+# CONTROLLER CONNECTION SETTINGS
+# ===========================================
+
+# AAP Controller URL (from Terraform output)
+aap_public_url: "https://aap.sandbox2957.opentlc.com"
+
+# Admin credentials - CHANGE THESE!
+aap_admin_user: "admin"
+aap_admin_password: "changeme"  # Use vault encryption for production
+
+# SSL verification (set to true for production)
+aap_verify_ssl: false
+
+# ===========================================
+# ORGANIZATION SETTINGS
+# ===========================================
+
+organization_name: "Default"
+
+# ===========================================
+# PROJECT SETTINGS
+# ===========================================
+
+# Public demo repository (no credentials needed)
+project_scm_url: "https://github.com/ansible/ansible-examples.git"
+project_scm_branch: "master"
+
+# Your organization's playbook repository (optional)
+# custom_project_scm_url: "https://github.com/your-org/infrastructure-playbooks.git"
+# custom_project_scm_branch: "main"
+
+# Git credentials for private repositories (optional)
+# git_token: "ghp_your_token_here"  # Use vault encryption
+
+# ===========================================
+# NOTIFICATION SETTINGS (Optional)
+# ===========================================
+
+# Email notification settings
+# smtp_host: "smtp.gmail.com"
+# smtp_port: 587
+# smtp_username: "your-email@gmail.com"
+# smtp_password: "your-app-password"  # Use vault encryption
+# notification_sender: "aap-notifications@yourdomain.com"
+# notification_recipient: "admin@yourdomain.com"
+
+# ===========================================
+# ADVANCED SETTINGS
+# ===========================================
+
+# Execution Environment
+execution_environment_image: "quay.io/ansible/automation-hub-ee:latest"
+
+# Job timeout settings (seconds)
+default_job_timeout: 300
+update_job_timeout: 1800
+deployment_job_timeout: 3600
+
+# ===========================================
+# VAULT ENCRYPTED VARIABLES (Production)
+# ===========================================
+
+# For production, encrypt sensitive variables with ansible-vault:
+# ansible-vault encrypt_string 'your-password' --name 'aap_admin_password'
+# ansible-vault encrypt_string 'your-token' --name 'git_token'
+
+# Example encrypted variable (replace with your own):
+# aap_admin_password: !vault |
+#           $ANSIBLE_VAULT;1.1;AES256
+#           66386439653239336464626566653964326634323264396635356661336336373965373135623661
+#           ...
+
+# ===========================================
+# ENVIRONMENT-SPECIFIC OVERRIDES
+# ===========================================
+
+# Development environment settings
+development:
+  aap_public_url: "https://aap-dev.yourdomain.com"
+  aap_verify_ssl: false
+  organization_name: "Development"
+
+# Staging environment settings  
+staging:
+  aap_public_url: "https://aap-staging.yourdomain.com"
+  aap_verify_ssl: true
+  organization_name: "Staging"
+
+# Production environment settings
+production:
+  aap_public_url: "https://aap.yourdomain.com"
+  aap_verify_ssl: true
+  organization_name: "Production"
+  default_job_timeout: 600
+  update_job_timeout: 3600
