@@ -760,17 +760,17 @@ Download from Red Hat Customer Portal to the bundles directory:
 ### 2. Transfer Files
 ```bash
 # Use the provided transfer playbook (recommended)
-ansible-playbook -i ../working/inventory/hosts.yml ../ansible/playbooks/transfer_aap_bundle.yml
+ansible-playbook -i working/inventory/hosts.yml ../ansible/playbooks/transfer_aap_bundle.yml
 
 # Or manual transfer:
-scp -F ../working/inventory/ssh_config working/aap-install/bundles/ansible-automation-platform-setup-bundle-*.tar.gz aap:/tmp/
-scp -F ../working/inventory/ssh_config working/aap-install/aap_install_inventory aap:/tmp/
+scp -F working/inventory/ssh_config working/aap-install/bundles/ansible-automation-platform-containerized-setup-bundle-*.tar.gz aap:/tmp/
+scp -F working/inventory/ssh_config working/aap-install/aap_install_inventory aap:/tmp/
 ```
 
 ### 3. Install AAP
 ```bash
 # SSH to AAP host
-ssh -F ../working/inventory/ssh_config aap
+ssh -F working/inventory/ssh_config aap
 
 # Extract, configure, and install
 cd /tmp
@@ -791,36 +791,36 @@ sudo ./setup.sh
 ### Configure AAP Controller
 ```bash
 # Copy and edit configuration
-cp ../ansible/vars/aap_controller_vars.yml.example ../working/aap-controller-config.yml
-# Edit ../working/aap-controller-config.yml with your settings
+cp ../ansible/vars/aap_controller_vars.yml.example working/aap-controller-config.yml
+# Edit working/aap-controller-config.yml with your settings
 
 # Run provisioning
-ansible-playbook -i ../working/inventory/hosts.yml ../ansible/playbooks/provision_aap_controller.yml \
-  -e @../working/aap-controller-config.yml
+ansible-playbook -i working/inventory/hosts.yml ../ansible/playbooks/provision_aap_controller.yml \
+  -e @working/aap-controller-config.yml
 ```
 
 ### Test Connectivity
 ```bash
 # Quick connectivity test
-ansible-playbook -i ../working/inventory/hosts.yml ../working/inventory/test_connections.yml
+ansible-playbook -i working/inventory/hosts.yml working/inventory/test_connections.yml
 ```
 
 ## Troubleshooting
 
 ### Check System Resources
 ```bash
-ssh -F ../working/inventory/ssh_config aap "free -h && df -h"
+ssh -F working/inventory/ssh_config aap "free -h && df -h"
 # Should show: 8GB RAM, 70GB+ free space
 ```
 
 ### Check Installation Progress
 ```bash
-ssh -F ../working/inventory/ssh_config aap "sudo tail -f /tmp/ansible-automation-platform-installer/*.log"
+ssh -F working/inventory/ssh_config aap "sudo tail -f /tmp/ansible-automation-platform-installer/*.log"
 ```
 
 ### Verify Services After Installation
 ```bash
-ssh -F ../working/inventory/ssh_config aap "sudo systemctl status automation-controller postgresql nginx"
+ssh -F working/inventory/ssh_config aap "sudo systemctl status automation-controller postgresql nginx"
 ```
 EOT
 }

@@ -1,0 +1,204 @@
+---
+# Distribute SSH Keys to Infrastructure Hosts
+# This playbook distributes the generated SSH keys to the appropriate hosts
+# Usage: ansible-playbook -i ../working/inventory/hosts.yml playbooks/distribute_ssh_keys.yml
+
+- name: Distribute SSH keys to bastion host
+  hosts: bastion
+  gather_facts: false
+  vars:
+    local_aap_key: "../../working/keys/aap_key"
+    local_ops_key: "../../working/keys/bastion_managed_key"
+    
+  tasks:
+    - name: Create .ssh directory for ec2-user
+      ansible.builtin.file:
+        path: /home/ec2-user/.ssh
+        state: directory
+        mode: '0700'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Copy AAP SSH key to bastion
+      ansible.builtin.copy:
+        src: "{{ local_aap_key }}"
+        dest: /home/ec2-user/.ssh/aap_key
+        mode: '0600'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Copy ops SSH key to bastion
+      ansible.builtin.copy:
+        src: "{{ local_ops_key }}"
+        dest: /home/ec2-user/.ssh/bastion_managed_key
+        mode: '0600'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Display bastion SSH key status
+      ansible.builtin.debug:
+        msg:
+          - "✅ SSH keys distributed to bastion host"
+          - "  - /home/ec2-user/.ssh/aap_key (for AAP/Exec nodes)"
+          - "  - /home/ec2-user/.ssh/bastion_managed_key (for Jump/Managed nodes)"
+
+- name: Distribute SSH keys to AAP host
+  hosts: aap_hosts
+  gather_facts: false
+  vars:
+    local_aap_key: "../../working/keys/aap_key"
+    
+  tasks:
+    - name: Create .ssh directory for ec2-user on AAP host
+      ansible.builtin.file:
+        path: /home/ec2-user/.ssh
+        state: directory
+        mode: '0700'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Copy AAP SSH key to AAP host as default SSH key
+      ansible.builtin.copy:
+        src: "{{ local_aap_key }}"
+        dest: /home/ec2-user/.ssh/id_rsa
+        mode: '0600'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Generate SSH public key from private key
+      ansible.builtin.shell: ssh-keygen -y -f /home/ec2-user/.ssh/id_rsa > /home/ec2-user/.ssh/id_rsa.pub
+      become: true
+      become_user: ec2-user
+
+    - name: Set correct permissions on SSH public key
+      ansible.builtin.file:
+        path: /home/ec2-user/.ssh/id_rsa.pub
+        mode: '0644'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Display AAP SSH key status
+      ansible.builtin.debug:
+        msg:
+          - "✅ SSH keys distributed to AAP host"
+          - "  - /home/ec2-user/.ssh/id_rsa (private key for execution node)"
+          - "  - /home/ec2-user/.ssh/id_rsa.pub (public key)"
+
+- name: Distribute SSH keys to jump host
+  hosts: jump_hosts
+  gather_facts: false
+  vars:
+    local_ops_key: "../../working/keys/bastion_managed_key"
+    
+  tasks:
+    - name: Create .ssh directory for ec2-user on jump host
+      ansible.builtin.file:
+        path: /home/ec2-user/.ssh
+        state: directory
+        mode: '0700'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Copy ops SSH key to jump host
+      ansible.builtin.copy:
+        src: "{{ local_ops_key }}"
+        dest: /home/ec2-user/.ssh/id_rsa
+        mode: '0600'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Generate SSH public key from private key
+      ansible.builtin.shell: ssh-keygen -y -f /home/ec2-user/.ssh/id_rsa > /home/ec2-user/.ssh/id_rsa.pub
+      become: true
+      become_user: ec2-user
+
+    - name: Set correct permissions on SSH public key
+      ansible.builtin.file:
+        path: /home/ec2-user/.ssh/id_rsa.pub
+        mode: '0644'
+        owner: ec2-user
+        group: ec2-user
+      become: true
+
+    - name: Display jump host SSH key status
+      ansible.builtin.debug:
+        msg:
+          - "✅ SSH keys distributed to jump host"
+          - "  - /home/ec2-user/.ssh/id_rsa (for managed nodes access)"
+          - "  - /home/ec2-user/.ssh/id_rsa.pub (public key)"
+
+- name: Test connectivity after key distribution
+  hosts: aap_hosts
+  gather_facts: false
+  tasks:
+    - name: Test SSH connectivity to execution node
+      ansible.builtin.shell: |
+        exec_host="{{ hostvars[groups['execution_nodes'][0]]['private_ip'] | default(hostvars[groups['execution_nodes'][0]]['ansible_host']) }}"
+        ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i /home/ec2-user/.ssh/id_rsa ec2-user@$exec_host "echo 'SSH connection successful from AAP to execution node'"
+      register: aap_to_exec_test
+      ignore_errors: true
+      become: true
+      become_user: ec2-user
+      when: groups['execution_nodes'] is defined and groups['execution_nodes'] | length > 0
+
+    - name: Display connectivity test results
+      ansible.builtin.debug:
+        msg:
+          - "=== SSH Connectivity Test Results ==="
+          - "AAP → Execution Node: {{ 'SUCCESS' if aap_to_exec_test is succeeded else 'FAILED' }}"
+          - "{% if aap_to_exec_test is failed %}Error: {{ aap_to_exec_test.stderr | default('Unknown error') }}{% endif %}"
+      when: groups['execution_nodes'] is defined and groups['execution_nodes'] | length > 0
+
+- name: Test connectivity from jump host to managed nodes
+  hosts: jump_hosts
+  gather_facts: false
+  tasks:
+    - name: Test SSH connectivity to managed nodes
+      ansible.builtin.shell: |
+        {% for host in groups['managed_nodes'] %}
+        managed_host="{{ hostvars[host]['private_ip'] | default(hostvars[host]['ansible_host']) }}"
+        echo "Testing connection to {{ host }} ($managed_host)"
+        ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i /home/ec2-user/.ssh/id_rsa ec2-user@$managed_host "echo 'Connected to {{ host }}'" || echo "Failed to connect to {{ host }}"
+        {% endfor %}
+      register: jump_to_managed_test
+      ignore_errors: true
+      become: true
+      become_user: ec2-user
+      when: groups['managed_nodes'] is defined and groups['managed_nodes'] | length > 0
+
+    - name: Display managed nodes connectivity results
+      ansible.builtin.debug:
+        var: jump_to_managed_test.stdout_lines
+      when: jump_to_managed_test is defined
+
+- name: SSH Key Distribution Summary
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Display distribution summary
+      ansible.builtin.debug:
+        msg:
+          - "=== SSH Key Distribution Complete ==="
+          - ""
+          - "Keys distributed to:"
+          - "  ✅ Bastion host: /home/ec2-user/.ssh/{aap_key,bastion_managed_key}"
+          - "  ✅ AAP host: /home/ec2-user/.ssh/id_rsa (for execution node access)"
+          - "  ✅ Jump host: /home/ec2-user/.ssh/id_rsa (for managed nodes access)"
+          - ""
+          - "Ready for:"
+          - "  - AAP installation and execution node configuration"
+          - "  - Administrative access via bastion"
+          - "  - Automation jobs via jump host to managed nodes"
+          - ""
+          - "Next steps:"
+          - "  1. Transfer AAP bundle: ansible-playbook playbooks/transfer_aap_bundle.yml"
+          - "  2. Install AAP: SSH to AAP host and run installation"
+          - "  3. Configure AAP: ansible-playbook playbooks/provision_aap_controller.yml"
