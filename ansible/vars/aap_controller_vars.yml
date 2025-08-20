@@ -1,99 +1,67 @@
-# AAP Controller Configuration Variables
-# Copy this file to 'aap_controller_vars.yml' and customize for your environment
+# AAP Controller Configuration Variables - POC Simplified
+# Copy this file and customize for your environment
 
 # ===========================================
 # CONTROLLER CONNECTION SETTINGS
 # ===========================================
 
-# AAP Controller URL (from Terraform output)
-aap_public_url: "https://aap.sandbox2957.opentlc.com"
+# AAP Controller URL (update with your domain)
+aap_public_url: "https://aap.sandbox2957.opentlc.com"  # Change this to your AAP URL
 
-# Admin credentials - CHANGE THESE!
+# Admin credentials
 aap_admin_user: "admin"
-aap_admin_password: "changeme"  # Use vault encryption for production
+aap_admin_password: "changeme"  # Change this to match your terraform.tfvars
 
-# SSL verification (set to true for production)
+# SSL verification (set to false for POC with self-signed certs)
 aap_verify_ssl: false
 
 # ===========================================
-# ORGANIZATION SETTINGS
+# INFRASTRUCTURE SETTINGS (Auto-detected)
 # ===========================================
 
+# These are automatically detected from your Terraform deployment
+# Override only if needed for your specific setup
+
+# Jump host IP (automatically set by Terraform)
+jump_host_ip: "10.50.10.10"  # Update if your jump host has different IP
+
+# Managed node IPs (automatically set by Terraform) 
+managed_node_0_ip: "10.50.20.11"  # Update if different
+managed_node_1_ip: "10.50.20.12"  # Update if different
+
+# ===========================================
+# POC CONFIGURATION OPTIONS
+# ===========================================
+
+# Organization to use (Default is fine for POC)
 organization_name: "Default"
 
-# ===========================================
-# PROJECT SETTINGS
-# ===========================================
+# Project settings (using public demo repository)
+demo_project_url: "https://github.com/ansible/ansible-examples.git"
+demo_project_branch: "master"
 
-# Public demo repository (no credentials needed)
-project_scm_url: "https://github.com/ansible/ansible-examples.git"
-project_scm_branch: "master"
-
-# Your organization's playbook repository (optional)
-# custom_project_scm_url: "https://github.com/your-org/infrastructure-playbooks.git"
-# custom_project_scm_branch: "main"
-
-# Git credentials for private repositories (optional)
-# git_token: "ghp_your_token_here"  # Use vault encryption
-
-# ===========================================
-# NOTIFICATION SETTINGS (Optional)
-# ===========================================
-
-# Email notification settings
-# smtp_host: "smtp.gmail.com"
-# smtp_port: 587
-# smtp_username: "your-email@gmail.com"
-# smtp_password: "your-app-password"  # Use vault encryption
-# notification_sender: "aap-notifications@yourdomain.com"
-# notification_recipient: "admin@yourdomain.com"
-
-# ===========================================
-# ADVANCED SETTINGS
-# ===========================================
-
-# Execution Environment
+# Execution environment
 execution_environment_image: "quay.io/ansible/automation-hub-ee:latest"
+
+# ===========================================
+# OPTIONAL CUSTOMIZATIONS
+# ===========================================
+
+# If you want to use your own playbook repository, uncomment and configure:
+# custom_project_url: "https://github.com/your-org/your-playbooks.git"
+# custom_project_branch: "main"
+
+# If you have a private repository, you'll need to create Git credentials in AAP UI
+
+# ===========================================
+# ADVANCED SETTINGS (Usually not needed for POC)
+# ===========================================
 
 # Job timeout settings (seconds)
 default_job_timeout: 300
-update_job_timeout: 1800
-deployment_job_timeout: 3600
+long_job_timeout: 1800
 
-# ===========================================
-# VAULT ENCRYPTED VARIABLES (Production)
-# ===========================================
+# Verbosity levels (0=minimal, 1=normal, 2=verbose, 3=debug)
+default_verbosity: 1
+debug_verbosity: 2
 
-# For production, encrypt sensitive variables with ansible-vault:
-# ansible-vault encrypt_string 'your-password' --name 'aap_admin_password'
-# ansible-vault encrypt_string 'your-token' --name 'git_token'
-
-# Example encrypted variable (replace with your own):
-# aap_admin_password: !vault |
-#           $ANSIBLE_VAULT;1.1;AES256
-#           66386439653239336464626566653964326634323264396635356661336336373965373135623661
-#           ...
-
-# ===========================================
-# ENVIRONMENT-SPECIFIC OVERRIDES
-# ===========================================
-
-# Development environment settings
-development:
-  aap_public_url: "https://aap-dev.yourdomain.com"
-  aap_verify_ssl: false
-  organization_name: "Development"
-
-# Staging environment settings  
-staging:
-  aap_public_url: "https://aap-staging.yourdomain.com"
-  aap_verify_ssl: true
-  organization_name: "Staging"
-
-# Production environment settings
-production:
-  aap_public_url: "https://aap.yourdomain.com"
-  aap_verify_ssl: true
-  organization_name: "Production"
-  default_job_timeout: 600
-  update_job_timeout: 3600
