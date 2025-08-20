@@ -1,11 +1,10 @@
 ---
-# AAP Automation Inventory
-# This inventory is designed to be imported into AAP Controller
-# for managing the managed nodes via the jump host
+# AAP Automation Inventory - POC Simplified
+# Import this into AAP Controller as inventory source
 
 plugin: constructed
 
-# Define the managed nodes that AAP will automate
+# Managed nodes for automation
 all:
   children:
     managed_environment:
@@ -14,20 +13,17 @@ all:
         managed-node-${i}:
           ansible_host: ${instance.private_ip}
           ansible_user: ec2-user
-          # For AAP: Use the jump host as ProxyJump
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyJump=ec2-user@${jump_aap_ip}'
-          node_type: managed
-          environment: production
+          environment: poc
           
 %{ endfor ~}
   vars:
-    # Global settings for AAP automation
+    # Global automation settings
     ansible_python_interpreter: /usr/bin/python3
     
-    # Jump host configuration for AAP
+    # Jump host configuration
     jump_host: ${jump_aap_ip}
     jump_user: ec2-user
     
     # Network information
-    vpc_environment: aap-growth-topology
-    management_subnet: managed
+    vpc_environment: aap-poc
