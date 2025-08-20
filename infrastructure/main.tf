@@ -305,6 +305,14 @@ resource "aws_security_group" "exec" {
     security_groups = [aws_security_group.aap.id] 
   }
 
+  ingress { 
+    description = "SSH from AAP (For Installation)" 
+    from_port = 22 
+    to_port = 22 
+    protocol = "tcp" 
+    security_groups = [aws_security_group.aap.id] 
+  }
+
   egress  { 
     from_port = 0 
     to_port = 0 
@@ -421,7 +429,7 @@ resource "aws_instance" "aap" {
 # Execution node (private AAP subnet)
 resource "aws_instance" "exec" {
   ami                    = data.aws_ami.rhel9.id
-  instance_type          = "t3.medium"
+  instance_type          = var.instance_type
   subnet_id              = values(aws_subnet.aap)[local.az_index_primary].id
   key_name               = aws_key_pair.aap.key_name
   vpc_security_group_ids = [aws_security_group.exec.id]

@@ -30,7 +30,7 @@
     - name: Find AAP bundle file locally
       ansible.builtin.find:
         paths: "{{ local_ansible_dir }}"
-        patterns: "ansible-automation-platform-setup-bundle-*.tar.gz"
+        patterns: "ansible-automation-platform-*-setup-bundle-*.tar.gz"
       delegate_to: localhost
       register: aap_bundle_files
 
