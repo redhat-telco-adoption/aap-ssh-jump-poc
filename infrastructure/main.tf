@@ -20,128 +20,6 @@ provider "aws" {
   region = var.region
 }
 
-####################
-# Variables & locals
-####################
-
-variable "region" {
-  type    = string
-  default = "us-east-2"
-}
-
-variable "route53_zone_name" {
-  description = "Public Route53 zone (e.g. sandbox2957.opentlc.com)"
-  type        = string
-  default     = "sandbox2957.opentlc.com"
-}
-
-variable "aap_hostname" {
-  description = "Host label (aap -> aap.<zone>)"
-  type        = string
-  default     = "aap"
-}
-
-variable "vpc_cidr" {
-  type    = string
-  default = "10.50.0.0/16"
-}
-
-# Two AZs for resilience
-variable "azs" {
-  type    = list(string)
-  default = ["us-east-2a", "us-east-2b"]
-}
-
-# Subnet CIDRs per tier (two per tier to match two AZs)
-variable "public_subnet_cidrs" {
-  type    = list(string)
-  default = ["10.50.0.0/24", "10.50.1.0/24"]
-}
-
-variable "aap_subnet_cidrs" {
-  type    = list(string)
-  default = ["10.50.10.0/24", "10.50.11.0/24"]
-}
-
-variable "managed_subnet_cidrs" {
-  type    = list(string)
-  default = ["10.50.20.0/24", "10.50.21.0/24"]
-}
-
-# Instance Sizes
-variable "instance_type" {
-  description = "AAP controller instance type "
-  type        = string
-  default     = "t3.large"
-}
-
-# Volume Sizes
-variable "aap_root_volume_size"  { 
-  description = "AAP controller root volume size "
-  type = number
-  default = 80 
-}
-variable "exec_root_volume_size" { 
-  description = "Execution node root volume size"
-  type = number
-  default = 40
-}
-variable "bastion_root_volume_size" { 
-  description = "Bastion host root volume size"
-  type = number
-  default = 20
-}
-variable "jump_root_volume_size" {
-  description = "Jump host root volume size"
-  type = number
-  default = 20
-}
-variable "managed_root_volume_size" { 
-  description = "Managed nodes root volume size"
-  type = number
-  default = 20
-}
-
-# AAP Installation Variables
-variable "aap_admin_password" {
-  description = "AAP admin password (change in production)"
-  type        = string
-  default     = "redhat123"
-  sensitive   = true
-}
-
-variable "registry_username" {
-  description = "Red Hat registry username"
-  type        = string
-  default     = ""
-}
-
-variable "registry_password" {
-  description = "Red Hat registry password or token"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "generate_random_passwords" {
-  description = "Generate random passwords for AAP components"
-  type        = bool
-  default     = true
-}
-
-locals {
-  name_prefix      = "aap25-poc"
-  aap_fqdn         = "${var.aap_hostname}.${var.route53_zone_name}"
-  az_index_primary = 0
-  
-  # Generate random passwords if enabled
-  pg_password = var.generate_random_passwords ? random_password.pg_password[0].result : "redhat123"
-  postgresql_admin_password = var.generate_random_passwords ? random_password.postgresql_admin_password[0].result : "redhat123"
-  automationhub_admin_password = var.generate_random_passwords ? random_password.automationhub_admin_password[0].result : "redhat123"
-  automationhub_pg_password = var.generate_random_passwords ? random_password.automationhub_pg_password[0].result : "redhat123"
-  sso_admin_password = var.generate_random_passwords ? random_password.sso_admin_password[0].result : "redhat123"
-}
-
 ############################
 # Random passwords for AAP
 ############################
@@ -180,8 +58,10 @@ resource "random_password" "sso_admin_password" {
 # Keys (generated locally)
 ############################
 
-resource "null_resource" "keys_dir" {
-  provisioner "local-exec" { command = "mkdir -p ./keys" }
+resource "null_resource" "working_dirs" {
+  provisioner "local-exec" { 
+    command = "mkdir -p ../working/keys ../working/inventory ../working/aap-install ../working/terraform"
+  }
 }
 
 # AAP + Exec key
@@ -191,8 +71,8 @@ resource "tls_private_key" "aap" {
 }
 
 resource "local_sensitive_file" "aap_key" {
-  depends_on      = [null_resource.keys_dir]
-  filename        = "./keys/aap_key"
+  depends_on      = [null_resource.working_dirs]
+  filename        = "../working/keys/aap_key"
   content         = tls_private_key.aap.private_key_pem
   file_permission = "0600"
 }
@@ -209,8 +89,8 @@ resource "tls_private_key" "ops" {
 }
 
 resource "local_sensitive_file" "ops_key" {
-  depends_on      = [null_resource.keys_dir]
-  filename        = "./keys/bastion_managed_key"
+  depends_on      = [null_resource.working_dirs]
+  filename        = "../working/keys/bastion_managed_key"
   content         = tls_private_key.ops.private_key_pem
   file_permission = "0600"
 }
@@ -758,27 +638,10 @@ resource "aws_route53_record" "aap_alias" {
 # Ansible Inventory Generation
 ############################
 
-# Create templates directory
-resource "null_resource" "templates_dir" {
-  provisioner "local-exec" { command = "mkdir -p ./templates" }
-}
-
-# Create inventory directory
-resource "null_resource" "inventory_dir" {
-  depends_on = [null_resource.templates_dir]
-  provisioner "local-exec" { command = "mkdir -p ./inventory" }
-}
-
-# Create ansible directory for AAP installation files
-resource "null_resource" "ansible_dir" {
-  depends_on = [null_resource.templates_dir]
-  provisioner "local-exec" { command = "mkdir -p ./ansible" }
-}
-
 # Generate the Ansible inventory file
 resource "local_file" "ansible_inventory" {
-  depends_on = [null_resource.inventory_dir]
-  filename   = "./inventory/hosts.yml"
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/inventory/hosts.yml"
   content = templatefile("${path.module}/templates/inventory.tpl", {
     bastion_public_ip = aws_instance.bastion.public_ip
     bastion_private_ip = aws_instance.bastion.private_ip
@@ -802,8 +665,8 @@ resource "local_file" "ansible_inventory" {
 
 # Generate SSH config file
 resource "local_file" "ssh_config" {
-  depends_on = [null_resource.inventory_dir]
-  filename   = "./inventory/ssh_config"
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/inventory/ssh_config"
   content = templatefile("${path.module}/templates/ssh_config.tpl", {
     bastion_public_ip = aws_instance.bastion.public_ip
     aap_private_ip = aws_instance.aap.private_ip
@@ -818,8 +681,8 @@ resource "local_file" "ssh_config" {
 
 # Generate AAP automation inventory
 resource "local_file" "aap_automation_inventory" {
-  depends_on = [null_resource.inventory_dir]
-  filename   = "./inventory/aap_automation_hosts.yml"
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/inventory/aap_automation_hosts.yml"
   content = templatefile("${path.module}/templates/aap_automation.tpl", {
     managed_instances = aws_instance.managed
     jump_aap_ip = aws_network_interface.jump_aap.private_ip
@@ -828,8 +691,8 @@ resource "local_file" "aap_automation_inventory" {
 
 # Generate AAP installation inventory
 resource "local_sensitive_file" "aap_install_inventory" {
-  depends_on = [null_resource.ansible_dir]
-  filename   = "./ansible/aap_install_inventory"
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/aap-install/aap_install_inventory"
   content = templatefile("${path.module}/templates/aap_install_inventory.tpl", {
     aap_private_ip = aws_instance.aap.private_ip
     exec_private_ip = aws_instance.exec.private_ip
@@ -848,8 +711,8 @@ resource "local_sensitive_file" "aap_install_inventory" {
 
 # Generate connection testing playbook
 resource "local_file" "test_connections_playbook" {
-  depends_on = [null_resource.inventory_dir]
-  filename   = "./inventory/test_connections.yml"
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/inventory/test_connections.yml"
   content = templatefile("${path.module}/templates/test_connections.tpl", {
     managed_instances = aws_instance.managed
   })
@@ -857,8 +720,8 @@ resource "local_file" "test_connections_playbook" {
 
 # Generate inventory README
 resource "local_file" "inventory_readme" {
-  depends_on = [null_resource.inventory_dir]
-  filename   = "./inventory/README.md"
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/inventory/README.md"
   content = templatefile("${path.module}/templates/inventory_readme.tpl", {
     bastion_public_ip = aws_instance.bastion.public_ip
     bastion_private_ip = aws_instance.bastion.private_ip
@@ -873,8 +736,8 @@ resource "local_file" "inventory_readme" {
 
 # Generate AAP installation README
 resource "local_file" "aap_install_readme" {
-  depends_on = [null_resource.ansible_dir]
-  filename   = "./ansible/README.md"
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/aap-install/README.md"
   content = <<-EOT
 # AAP Installation Directory
 
@@ -883,30 +746,31 @@ This directory contains the essential files for AAP 2.5 installation.
 ## Files
 
 - **`aap_install_inventory`** - Pre-configured AAP installation inventory
-- **AAP bundle** - Download and place your AAP bundle here
+- **bundles/** - Download and place your AAP bundle here
 
 ## Quick Installation Process
 
 ### 1. Download AAP Bundle
-Download from Red Hat Customer Portal to this directory:
+Download from Red Hat Customer Portal to the bundles directory:
 ```bash
-# Place in ansible/ directory with name like:
+# Place in working/aap-install/bundles/ directory with name like:
 # ansible-automation-platform-setup-bundle-2.5-1.tar.gz
 ```
 
 ### 2. Transfer Files
 ```bash
-# Transfer AAP bundle
-scp -F inventory/ssh_config ansible/ansible-automation-platform-setup-bundle-*.tar.gz aap:/tmp/
+# Use the provided transfer playbook (recommended)
+ansible-playbook -i ../working/inventory/hosts.yml ../ansible/playbooks/transfer_aap_bundle.yml
 
-# Transfer installation inventory
-scp -F inventory/ssh_config ansible/aap_install_inventory aap:/tmp/
+# Or manual transfer:
+scp -F ../working/inventory/ssh_config working/aap-install/bundles/ansible-automation-platform-setup-bundle-*.tar.gz aap:/tmp/
+scp -F ../working/inventory/ssh_config working/aap-install/aap_install_inventory aap:/tmp/
 ```
 
 ### 3. Install AAP
 ```bash
 # SSH to AAP host
-ssh -F inventory/ssh_config aap
+ssh -F ../working/inventory/ssh_config aap
 
 # Extract, configure, and install
 cd /tmp
@@ -926,130 +790,37 @@ sudo ./setup.sh
 
 ### Configure AAP Controller
 ```bash
+# Copy and edit configuration
+cp ../ansible/vars/aap_controller_vars.yml.example ../working/aap-controller-config.yml
+# Edit ../working/aap-controller-config.yml with your settings
+
 # Run provisioning
-ansible-playbook -i inventory/hosts.yml ansible/provision_aap_controller.yml \
-  -e @ansible/vars/aap_controller_vars.yml
+ansible-playbook -i ../working/inventory/hosts.yml ../ansible/playbooks/provision_aap_controller.yml \
+  -e @../working/aap-controller-config.yml
 ```
 
 ### Test Connectivity
 ```bash
 # Quick connectivity test
-ansible-playbook -i inventory/hosts.yml inventory/test_connections.yml
+ansible-playbook -i ../working/inventory/hosts.yml ../working/inventory/test_connections.yml
 ```
 
 ## Troubleshooting
 
 ### Check System Resources
 ```bash
-ssh -F inventory/ssh_config aap "free -h && df -h"
+ssh -F ../working/inventory/ssh_config aap "free -h && df -h"
 # Should show: 8GB RAM, 70GB+ free space
 ```
 
 ### Check Installation Progress
 ```bash
-ssh -F inventory/ssh_config aap "sudo tail -f /tmp/ansible-automation-platform-installer/*.log"
+ssh -F ../working/inventory/ssh_config aap "sudo tail -f /tmp/ansible-automation-platform-installer/*.log"
 ```
 
 ### Verify Services After Installation
 ```bash
-ssh -F inventory/ssh_config aap "sudo systemctl status automation-controller postgresql nginx"
+ssh -F ../working/inventory/ssh_config aap "sudo systemctl status automation-controller postgresql nginx"
 ```
 EOT
-}
-
-#################
-# Outputs
-#################
-
-output "aap_url" {
-  value = "https://${aws_route53_record.aap_alias.fqdn}"
-}
-
-output "bastion_public_ip" {
-  value = aws_instance.bastion.public_ip
-}
-
-output "bastion_ssh" {
-  value = "ssh -i ./keys/bastion_managed_key ec2-user@${aws_instance.bastion.public_ip}"
-}
-
-output "jump_aap_ip" {
-  value = aws_network_interface.jump_aap.private_ip
-}
-
-output "jump_managed_ip" {
-  value = aws_network_interface.jump_managed.private_ip
-}
-
-output "aap_host_private_ip" {
-  value = aws_instance.aap.private_ip
-}
-
-output "exec_node_private_ip" {
-  value = aws_instance.exec.private_ip
-}
-
-output "managed_nodes_private_ips" {
-  value = [for m in aws_instance.managed : m.private_ip]
-}
-
-output "ssh_key_paths" {
-  value = {
-    aap_key             = local_sensitive_file.aap_key.filename
-    bastion_managed_key = local_sensitive_file.ops_key.filename
-  }
-  sensitive = true
-}
-
-output "aap_installation" {
-  description = "AAP installation process"
-  value = {
-    install_inventory = local_sensitive_file.aap_install_inventory.filename
-    admin_password = var.aap_admin_password
-    aap_fqdn = local.aap_fqdn
-    simple_process = [
-      "# Installation Process:",
-      "",
-      "# 1. Download AAP bundle to ansible/ directory",
-      "# 2. Transfer files:",
-      "scp -F inventory/ssh_config ansible/aap_install_inventory aap:/tmp/",
-      "scp -F inventory/ssh_config ansible/ansible-automation-platform-setup-bundle-*.tar.gz aap:/tmp/",
-      "",
-      "# 3. SSH and install:",
-      "ssh -F inventory/ssh_config aap",
-      "cd /tmp && tar -xzf ansible-automation-platform-setup-bundle-*.tar.gz",
-      "cd ansible-automation-platform-setup-bundle-* && cp /tmp/aap_install_inventory inventory",
-      "sudo ./setup.sh",
-      "",
-      "# 4. Access AAP at: https://${local.aap_fqdn}",
-      "# 5. Login with admin / ${var.aap_admin_password}"
-    ]
-  }
-  sensitive = true
-}
-
-output "inventory_files" {
-  description = "Generated inventory and configuration files"
-  value = {
-    ansible_inventory    = local_file.ansible_inventory.filename
-    ssh_config          = local_file.ssh_config.filename
-    aap_automation      = local_file.aap_automation_inventory.filename
-    aap_install         = local_sensitive_file.aap_install_inventory.filename
-    test_playbook       = local_file.test_connections_playbook.filename
-    inventory_readme    = local_file.inventory_readme.filename
-    aap_install_readme  = local_file.aap_install_readme.filename
-  }
-}
-
-output "quick_start_commands" {
-  description = "Quick start commands "
-  value = {
-    test_connections = "ansible-playbook -i ./inventory/hosts.yml ./inventory/test_connections.yml"
-    ssh_to_bastion   = "ssh -F ./inventory/ssh_config bastion"
-    ssh_to_aap       = "ssh -F ./inventory/ssh_config aap"
-    ssh_to_jump      = "ssh -F ./inventory/ssh_config jump"
-    ping_all_hosts   = "ansible all -i ./inventory/hosts.yml -m ping"
-    install_aap_note = "# See ./ansible/README.md for 5-step installation process"
-    access_aap       = "# After installation: open https://${local.aap_fqdn}"
-  }
 }

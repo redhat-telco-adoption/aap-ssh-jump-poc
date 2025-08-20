@@ -11,7 +11,7 @@ all:
           ansible_host: ${bastion_public_ip}
           ansible_user: ec2-user
           ansible_ssh_private_key_file: ${ops_key_path}
-          ansible_ssh_common_args: '-F inventory/ssh_config'
+          ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
           role: bastion
           
     # AAP Infrastructure 
@@ -21,7 +21,7 @@ all:
           hosts:
             ${name_prefix}-aap:
               ansible_host: aap
-              ansible_ssh_common_args: '-F inventory/ssh_config'
+              ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
               aap_url: https://${aap_fqdn}
               role: aap-controller
               
@@ -29,7 +29,7 @@ all:
           hosts:
             ${name_prefix}-exec:
               ansible_host: exec
-              ansible_ssh_common_args: '-F inventory/ssh_config'
+              ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
               role: execution-node
               
     # Jump Host (Network Bridge)
@@ -37,7 +37,7 @@ all:
       hosts:
         ${name_prefix}-jump:
           ansible_host: jump
-          ansible_ssh_common_args: '-F inventory/ssh_config'
+          ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
           aap_interface_ip: ${jump_aap_ip}
           managed_interface_ip: ${jump_managed_ip}
           role: jump-host
@@ -48,7 +48,7 @@ all:
 %{ for i, node in managed_nodes ~}
         ${node.name}:
           ansible_host: managed-${i}
-          ansible_ssh_common_args: '-F inventory/ssh_config'
+          ansible_ssh_common_args: '-F ../working/inventory/ssh_config'
           role: managed-node
 %{ endfor ~}
           
@@ -63,7 +63,7 @@ all:
     aap_url: https://${aap_fqdn}
     aap_private_ip: ${aap_private_ip}
     
-    # SSH Keys
+    # SSH Keys (relative to project root)
     aap_ssh_key: ${aap_key_path}
     ops_ssh_key: ${ops_key_path}
     

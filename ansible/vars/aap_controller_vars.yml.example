@@ -1,22 +1,16 @@
 # AAP Controller Configuration Variables - POC Simplified
-# Copy this file to ../working/aap-controller-config.yml and customize for your environment
-# 
-# Usage:
-#   cp ansible/vars/aap_controller_vars.yml.example working/aap-controller-config.yml
-#   # Edit working/aap-controller-config.yml
-#   ansible-playbook -i working/inventory/hosts.yml ansible/playbooks/provision_aap_controller.yml \
-#     -e @working/aap-controller-config.yml
+# Copy this file and customize for your environment
 
 # ===========================================
 # CONTROLLER CONNECTION SETTINGS
 # ===========================================
 
-# AAP Controller URL (update with your domain from terraform output)
-aap_public_url: "https://aap.sandbox2957.opentlc.com"  # CHANGE THIS to your AAP URL
+# AAP Controller URL (update with your domain)
+aap_public_url: "https://aap.sandbox2957.opentlc.com"  # Change this to your AAP URL
 
-# Admin credentials (should match your terraform.tfvars)
+# Admin credentials
 aap_admin_user: "admin"
-aap_admin_password: "changeme"  # CHANGE THIS to match your terraform.tfvars
+aap_admin_password: "changeme"  # Change this to match your terraform.tfvars
 
 # SSL verification (set to false for POC with self-signed certs)
 aap_verify_ssl: false
@@ -28,7 +22,7 @@ aap_verify_ssl: false
 # These are automatically detected from your Terraform deployment
 # Override only if needed for your specific setup
 
-# Jump host IP (automatically set by Terraform in working/inventory/hosts.yml)
+# Jump host IP (automatically set by Terraform)
 jump_host_ip: "10.50.10.10"  # Update if your jump host has different IP
 
 # Managed node IPs (automatically set by Terraform) 
@@ -71,26 +65,3 @@ long_job_timeout: 1800
 default_verbosity: 1
 debug_verbosity: 2
 
-# ===========================================
-# QUICK SETUP NOTES
-# ===========================================
-
-# After copying this file to working/aap-controller-config.yml:
-# 1. Update aap_public_url with your actual AAP domain
-# 2. Update aap_admin_password to match your terraform.tfvars
-# 3. Verify IP addresses match your infrastructure
-# 4. Run the provisioning playbook:
-#    
-#    ansible-playbook -i working/inventory/hosts.yml \
-#      ansible/playbooks/provision_aap_controller.yml \
-#      -e @working/aap-controller-config.yml
-
-# ===========================================
-# TROUBLESHOOTING
-# ===========================================
-
-# If provisioning fails:
-# 1. Test AAP connectivity: curl -k https://your-aap-url/api/v2/ping/
-# 2. Verify credentials work in AAP web interface
-# 3. Check SSH key exists: ls -la working/keys/bastion_managed_key
-# 4. Run with verbose output: add -vvv to ansible-playbook command
