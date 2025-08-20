@@ -1,0 +1,126 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and customize for your environment
+# cp terraform.tfvars.example terraform.tfvars
+
+# ===========================================
+# REQUIRED: DNS/Domain Configuration
+# ===========================================
+
+# IMPORTANT: You MUST have a Route53 hosted zone for SSL certificates
+# This is required for AAP HTTPS access
+route53_zone_name = "sandbox2957.opentlc.com"  # CHANGE THIS to your domain
+
+# AAP hostname (creates aap.yourdomain.com)
+aap_hostname = "aap"
+
+# ===========================================
+# REQUIRED: AAP Admin Configuration  
+# ===========================================
+
+# AAP admin password - CHANGE THIS!
+aap_admin_password = "YourSecurePassword123!"
+
+# ===========================================
+# AWS Configuration
+# ===========================================
+
+# AWS region for deployment
+region = "us-east-2"
+
+# Availability zones (must match your region)
+azs = ["us-east-2a", "us-east-2b"]
+
+# ===========================================
+# Instance Sizing
+# ===========================================
+
+# AAP Controller instance type 
+instance_type = "t3.large"  # Cost: ~$60/month (was t3.2xlarge ~$120/month)
+
+# Storage sizes 
+aap_root_volume_size = 80      # GB (reduced from 160GB)
+exec_root_volume_size = 40     # GB (reduced from 60GB)
+bastion_root_volume_size = 20  # GB
+jump_root_volume_size = 20     # GB
+managed_root_volume_size = 20  # GB (reduced from 30GB)
+
+# ===========================================
+# Network Configuration (Usually no changes needed)
+# ===========================================
+
+# VPC CIDR block
+vpc_cidr = "10.50.0.0/16"
+
+# Public subnet CIDRs (for bastion and load balancer)
+public_subnet_cidrs = ["10.50.0.0/24", "10.50.1.0/24"]
+
+# AAP subnet CIDRs (for AAP components)
+aap_subnet_cidrs = ["10.50.10.0/24", "10.50.11.0/24"]
+
+# Managed subnet CIDRs (for automation targets)
+managed_subnet_cidrs = ["10.50.20.0/24", "10.50.21.0/24"]
+
+# ===========================================
+# Red Hat Registry (Optional but Recommended)
+# ===========================================
+
+# Red Hat registry credentials for container access
+# Get these from: https://access.redhat.com/terms-based-registry/
+# Leave empty for basic installation
+registry_username = ""  # Your Red Hat service account username
+registry_password = ""  # Your Red Hat service account token
+
+# ===========================================
+# Security Configuration
+# ===========================================
+
+# Generate random passwords for AAP components (recommended)
+generate_random_passwords = true
+
+
+
+# ===========================================
+# QUICK START CHECKLIST
+# ===========================================
+
+# Before running terraform apply:
+# 
+# ✅ 1. Create/verify Route53 hosted zone for your domain
+# ✅ 2. Update route53_zone_name above
+# ✅ 3. Set secure aap_admin_password
+# ✅ 4. Choose instance sizing for your budget
+# ✅ 5. Get Red Hat registry credentials (optional)
+# ✅ 6. Save this file as terraform.tfvars
+#
+# Then run:
+# terraform init
+# terraform plan
+# terraform apply
+
+# ===========================================
+# DOMAIN SETUP HELP
+# ===========================================
+
+# If you don't have a domain:
+# 1. Register one in Route53: AWS Console → Route53 → Register domain
+# 2. Or use existing domain with Route53 hosted zone
+# 3. For subdomain (recommended): Create hosted zone for lab.yourdomain.com
+#    Then add NS records in your main domain pointing to the hosted zone
+
+# Example for subdomain setup:
+# Main domain: example.com
+# Create hosted zone: lab.example.com
+# Use: route53_zone_name = "lab.example.com"
+# AAP will be accessible at: https://aap.lab.example.com
+
+# ===========================================
+# SECURITY NOTES
+# ===========================================
+
+# - This creates SSH keys locally in ./keys/ directory
+# - Keys are generated with 0600 permissions
+# - Change default passwords in production
+# - Registry credentials are optional but recommended
+# - All instances use latest RHEL 9 AMI
+# - Network access is restricted by security groups
+# - Managed nodes have no direct internet access

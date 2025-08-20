@@ -43,3 +43,4 @@ terraform.rc
 keys/
 inventory/
 ansible/ansible-automation-platform-containerized-setup-bundle-2.5-17-x86_64.tar.gz
+ansible/aap_install_inventory

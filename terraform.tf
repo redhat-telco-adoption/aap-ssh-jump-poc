@@ -863,6 +863,7 @@ resource "local_file" "inventory_readme" {
     bastion_public_ip = aws_instance.bastion.public_ip
     bastion_private_ip = aws_instance.bastion.private_ip
     aap_private_ip = aws_instance.aap.private_ip
+    aap_fqdn = local.aap_fqdn
     exec_private_ip = aws_instance.exec.private_ip
     jump_aap_ip = aws_network_interface.jump_aap.private_ip
     jump_managed_ip = aws_network_interface.jump_managed.private_ip
