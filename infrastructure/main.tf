@@ -359,6 +359,14 @@ resource "aws_security_group" "jump_aap" {
     security_groups = [aws_security_group.bastion_public.id] 
   }
 
+  ingress { 
+    description = "SSH from aap" 
+    from_port = 22 
+    to_port = 22 
+    protocol = "tcp" 
+    security_groups = [aws_security_group.aap.id] 
+  }
+
   egress  { 
     from_port = 0 
     to_port = 0 
@@ -738,6 +746,18 @@ resource "local_file" "inventory_readme" {
     exec_private_ip = aws_instance.exec.private_ip
     jump_aap_ip = aws_network_interface.jump_aap.private_ip
     jump_managed_ip = aws_network_interface.jump_managed.private_ip
+    managed_instances = aws_instance.managed
+  })
+}
+
+# Generate AAP controller variables file
+resource "local_file" "aap_controller_vars" {
+  depends_on = [null_resource.working_dirs]
+  filename   = "../working/aap-install/aap_controller_vars.yml"
+  content = templatefile("${path.module}/templates/aap_controller_vars.tpl", {
+    aap_fqdn = local.aap_fqdn
+    aap_admin_password = var.aap_admin_password
+    jump_aap_ip = aws_network_interface.jump_aap.private_ip
     managed_instances = aws_instance.managed
   })
 }

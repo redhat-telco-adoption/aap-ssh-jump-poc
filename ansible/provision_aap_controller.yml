@@ -1,308 +1,260 @@
 ---
-# AAP Controller Provisioning Playbook
-# This playbook provides essential AAP Controller configuration
+# AAP Controller Provisioning Playbook - Updated for Jump Host POC
+# This playbook configures AAP Controller for the SSH jump host POC environment
 # 
 # Usage:
-#   ansible-playbook provision_aap_controller.yml -e @vars/aap_controller_vars.yml
+#   ansible-playbook -i working/inventory/hosts.yml ansible/provision_aap_controller.yml
 
-- name: Provision AAP Controller Configuration - POC Simplified
+- name: Provision AAP Controller for SSH Jump Host POC
   hosts: localhost
   gather_facts: false
+  vars_files:
+    - ../working/aap-install/aap_controller_vars.yml
+  
   vars:
-    # Connection settings with sensible defaults
-    controller_host: "{{ aap_public_url | default('https://localhost') }}"
-    controller_username: "{{ aap_admin_user | default('admin') }}"
-    controller_password: "{{ aap_admin_password | default('changeme') }}"
-    controller_verify_ssl: "{{ aap_verify_ssl | default(false) }}"
-    
-    # Use Default organization for simplicity
-    organization_name: "Default"
+    # Connection settings
+    controller_host: "{{ aap_public_url }}"
+    controller_username: "{{ aap_admin_user }}"
+    controller_password: "{{ aap_admin_password }}"
+    controller_verify_ssl: "{{ aap_verify_ssl }}"
 
   tasks:
-    - name: Display configuration summary
-      ansible.builtin.debug:
-        msg:
-          - "=== AAP Controller POC Configuration ==="
-          - "Controller: {{ controller_host }}"
-          - "Organization: {{ organization_name }}"
-          - "SSL Verification: {{ controller_verify_ssl }}"
-          - "Mode: POC Simplified"
+    - name: Configure AAP Controller
+      block:
+        - name: Display configuration summary
+          ansible.builtin.debug:
+            msg:
+              - "=== AAP Controller POC Configuration ==="
+              - "Controller: {{ controller_host }}"
+              - "Organization: {{ organization_name }}"
+              - "Project: {{ project_name }}"
+              - "Repository: {{ project_scm_url }}"
+              - "SSH Jump Host: {{ jump_host_ip }}"
+              - "Managed Hosts: {{ managed_hosts | length }}"
 
-    - name: Test AAP Controller connectivity
-      ansible.builtin.uri:
-        url: "{{ controller_host }}/api/v2/ping/"
-        validate_certs: "{{ controller_verify_ssl }}"
-        timeout: 10
-      register: ping_result
+        - name: Test AAP Controller connectivity
+          ansible.builtin.uri:
+            url: "{{ controller_host }}/api/v2/ping/"
+            validate_certs: "{{ controller_verify_ssl }}"
+            timeout: 10
+          register: ping_result
 
-    - name: Verify controller is accessible
-      ansible.builtin.assert:
-        that:
-          - ping_result.status == 200
-        fail_msg: "Cannot connect to AAP Controller at {{ controller_host }}"
+        - name: Verify controller is accessible
+          ansible.builtin.assert:
+            that:
+              - ping_result.status == 200
+            fail_msg: "Cannot connect to AAP Controller at {{ controller_host }}"
 
-    # ===========================================
-    # ESSENTIAL CREDENTIALS
-    # ===========================================
-    
-    - name: Check if SSH key file exists
-      ansible.builtin.stat:
-        path: "{{ ssh_key_path }}"
-      register: ssh_key_stat
-      vars:
-        ssh_key_path: "./keys/bastion_managed_key"
+        # ===========================================
+        # SSH CREDENTIALS
+        # ===========================================
+        
+        - name: Check if SSH key file exists
+          ansible.builtin.stat:
+            path: "./working/keys/bastion_managed_key"
+          register: ssh_key_stat
 
-    - name: Create SSH credential for managed nodes
-      ansible.controller.credential:
-        name: "Managed Nodes SSH Key"
-        description: "SSH key for accessing managed nodes via jump host"
-        organization: "{{ organization_name }}"
-        credential_type: "Machine"
-        inputs:
-          username: "ec2-user"
-          ssh_key_data: "{{ lookup('file', './keys/bastion_managed_key') }}"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
-      when: ssh_key_stat.stat.exists
+        - name: Create SSH credential for managed nodes with jump host
+          ansible.controller.credential:
+            name: "{{ ssh_credential_name }}"
+            description: "SSH key for managed nodes via jump host"
+            organization: "{{ organization_name }}"
+            credential_type: "Machine"
+            inputs:
+              username: "{{ ssh_username }}"
+              ssh_key_data: "{{ lookup('file', './working/keys/bastion_managed_key') }}"
+              ssh_key_unlock: ""
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+            state: present
+          when: ssh_key_stat.stat.exists
 
-    # ===========================================
-    # EXECUTION ENVIRONMENT
-    # ===========================================
-    
-    - name: Create basic execution environment
-      ansible.controller.execution_environment:
-        name: "Default EE"
-        description: "Default execution environment for POC"
-        image: "quay.io/ansible/automation-hub-ee:latest"
-        pull: "missing"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        # ===========================================
+        # EXECUTION ENVIRONMENT
+        # ===========================================
+        
+        - name: Create execution environment
+          ansible.controller.execution_environment:
+            name: "{{ execution_environment.name }}"
+            description: "{{ execution_environment.description }}"
+            image: "{{ execution_environment.image }}"
+            pull: "{{ execution_environment.pull }}"
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+            state: present
 
-    # ===========================================
-    # SIMPLE PROJECT
-    # ===========================================
-    
-    - name: Create demo project
-      ansible.controller.project:
-        name: "Demo Playbooks"
-        description: "Sample playbooks for POC testing"
-        organization: "{{ organization_name }}"
-        scm_type: "git"
-        scm_url: "https://github.com/ansible/ansible-examples.git"
-        scm_branch: "master"
-        scm_clean: true
-        scm_update_on_launch: true
-        timeout: 600
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        # ===========================================
+        # PROJECT (Actual GitHub Repository)
+        # ===========================================
+        
+        - name: Create project for SSH Jump POC
+          ansible.controller.project:
+            name: "{{ project_name }}"
+            description: "AAP SSH Jump Host POC playbooks and configurations"
+            organization: "{{ organization_name }}"
+            scm_type: "git"
+            scm_url: "{{ project_scm_url }}"
+            scm_branch: "{{ project_scm_branch }}"
+            scm_clean: true
+            scm_update_on_launch: true
+            timeout: 600
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+            state: present
 
-    # ===========================================
-    # SIMPLE INVENTORY
-    # ===========================================
-    
-    - name: Create managed infrastructure inventory
-      ansible.controller.inventory:
-        name: "Managed Infrastructure"
-        description: "POC managed nodes accessible via jump host"
-        organization: "{{ organization_name }}"
-        variables:
-          ansible_python_interpreter: "/usr/bin/python3"
-          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        # ===========================================
+        # INVENTORY
+        # ===========================================
+        
+        - name: Create managed infrastructure inventory
+          ansible.controller.inventory:
+            name: "{{ inventory_name }}"
+            description: "{{ inventory_description }}"
+            organization: "{{ organization_name }}"
+            variables: "{{ inventory_variables }}"
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+            state: present
 
-    - name: Create managed nodes group
-      ansible.controller.group:
-        name: "managed_environment"
-        description: "All managed nodes for POC"
-        inventory: "Managed Infrastructure"
-        variables:
-          environment: "poc"
-          node_type: "managed"
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        - name: Create managed nodes group
+          ansible.controller.group:
+            name: "{{ group_name }}"
+            description: "{{ group_description }}"
+            inventory: "{{ inventory_name }}"
+            variables:
+              ansible_user: "{{ ssh_username }}"
+              environment: "{{ inventory_variables.environment }}"
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+            state: present
 
-    # Add hosts dynamically from the generated inventory
-    - name: Add managed-node-0
-      ansible.controller.host:
-        name: "managed-node-0"
-        description: "First managed node"
-        inventory: "Managed Infrastructure"
-        variables:
-          ansible_host: "{{ managed_node_0_ip | default('10.50.20.11') }}"
-          ansible_user: "ec2-user"
-          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyJump=ec2-user@{{ jump_host_ip | default('10.50.10.10') }}"
-        groups: ["managed_environment"]
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        # Add managed hosts dynamically from terraform-generated data
+        - name: Add managed hosts to inventory
+          ansible.controller.host:
+            name: "{{ item.name }}"
+            description: "Managed node {{ item.name }}"
+            inventory: "{{ inventory_name }}"
+            variables:
+              ansible_host: "{{ item.ansible_host }}"
+              ansible_user: "{{ ssh_username }}"
+              ansible_ssh_common_args: "{{ inventory_variables.ansible_ssh_common_args }} -o ProxyJump={{ ssh_username }}@{{ jump_host_ip }}"
+              private_ip: "{{ item.private_ip }}"
+            groups: ["{{ group_name }}"]
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+            state: present
+          loop: "{{ managed_hosts }}"
 
-    - name: Add managed-node-1
-      ansible.controller.host:
-        name: "managed-node-1"
-        description: "Second managed node"
-        inventory: "Managed Infrastructure"
-        variables:
-          ansible_host: "{{ managed_node_1_ip | default('10.50.20.12') }}"
-          ansible_user: "ec2-user"
-          ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyJump=ec2-user@{{ jump_host_ip | default('10.50.10.10') }}"
-        groups: ["managed_environment"]
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        # ===========================================
+        # JOB TEMPLATES
+        # ===========================================
+        
+        - name: Create job templates
+          ansible.controller.job_template:
+            name: "{{ item.name }}"
+            description: "{{ item.description }}"
+            organization: "{{ organization_name }}"
+            project: "{{ project_name }}"
+            playbook: "{{ item.playbook }}"
+            inventory: "{{ inventory_name }}"
+            credentials: ["{{ ssh_credential_name }}"]
+            execution_environment: "{{ execution_environment.name }}"
+            job_type: "run"
+            verbosity: "{{ item.verbosity }}"
+            timeout: "{{ item.timeout }}"
+            become_enabled: false
+            allow_simultaneous: true
+            ask_limit_on_launch: true
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+            state: present
+          loop: "{{ job_templates }}"
 
-    # ===========================================
-    # ESSENTIAL JOB TEMPLATES
-    # ===========================================
-    
-    - name: Create ping job template
-      ansible.controller.job_template:
-        name: "Ping All Managed Nodes"
-        description: "Test connectivity to all managed nodes"
-        organization: "{{ organization_name }}"
-        project: "Demo Playbooks"
-        playbook: "lamp_simple/roles/common/tasks/main.yml"  # Simple ping equivalent
-        inventory: "Managed Infrastructure"
-        credentials: ["Managed Nodes SSH Key"]
-        execution_environment: "Default EE"
-        job_type: "run"
-        verbosity: 1
-        timeout: 300
-        become_enabled: false
-        allow_simultaneous: true
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        # ===========================================
+        # VALIDATION
+        # ===========================================
+        
+        - name: Wait for project sync
+          ansible.controller.project:
+            name: "{{ project_name }}"
+            wait: true
+            timeout: 300
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
 
-    - name: Create system info job template
-      ansible.controller.job_template:
-        name: "System Information"
-        description: "Gather basic system information from managed nodes"
-        organization: "{{ organization_name }}"
-        project: "Demo Playbooks"
-        playbook: "lamp_simple/site.yml"
-        inventory: "Managed Infrastructure"
-        credentials: ["Managed Nodes SSH Key"]
-        execution_environment: "Default EE"
-        job_type: "run"
-        verbosity: 1
-        timeout: 600
-        become_enabled: false
-        ask_limit_on_launch: true
-        extra_vars:
-          gather_facts: true
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        - name: Test connectivity job template (validation)
+          ansible.controller.job_launch:
+            job_template: "Ping All Managed Nodes"
+            limit: "{{ managed_hosts[0].name }}"
+            wait: false
+            controller_host: "{{ controller_host }}"
+            controller_username: "{{ controller_username }}"
+            controller_password: "{{ controller_password }}"
+            validate_certs: "{{ controller_verify_ssl }}"
+          register: validation_job
+          ignore_errors: true
 
-    - name: Create ad-hoc command template
-      ansible.controller.job_template:
-        name: "Run Ad-hoc Commands"
-        description: "Run simple commands on managed nodes"
-        organization: "{{ organization_name }}"
-        project: "Demo Playbooks"
-        playbook: "lamp_simple/roles/common/tasks/main.yml"
-        inventory: "Managed Infrastructure"
-        credentials: ["Managed Nodes SSH Key"]
-        execution_environment: "Default EE"
-        job_type: "run"
-        verbosity: 2
-        timeout: 300
-        become_enabled: true
-        ask_limit_on_launch: true
-        ask_variables_on_launch: true
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-        state: present
+        - name: Display setup completion
+          ansible.builtin.debug:
+            msg:
+              - "=== AAP Controller Setup Complete ==="
+              - ""
+              - "✅ SSH Credential: {{ ssh_credential_name }}"
+              - "✅ Execution Environment: {{ execution_environment.name }}"
+              - "✅ Project: {{ project_name }}"
+              - "✅ Repository: {{ project_scm_url }}"
+              - "✅ Inventory: {{ inventory_name }} ({{ managed_hosts | length }} hosts)"
+              - "✅ Group: {{ group_name }}"
+              - "✅ Job Templates: {{ job_templates | length }} templates created"
+              - ""
+              - "🎯 Ready for Testing:"
+              - "1. Login to {{ controller_host }}"
+              - "2. Navigate to Resources → Templates"
+              - "3. Run 'Ping All Managed Nodes'"
+              - "4. Run 'System Information'"
+              - ""
+              - "💡 Jump Host Configuration:"
+              - "- All managed nodes use ProxyJump via {{ jump_host_ip }}"
+              - "- SSH key: {{ ssh_credential_name }}"
+              - "- Playbooks from: {{ project_scm_url }}"
+              - ""
+              - "📋 Created Job Templates:"
+              - "{% for template in job_templates -%}"
+              - "  - {{ template.name }}: {{ template.playbook }}"
+              - "{% endfor %}"
 
-    # ===========================================
-    # VALIDATION
-    # ===========================================
-    
-    - name: Wait for project sync
-      ansible.controller.project:
-        name: "Demo Playbooks"
-        wait: true
-        timeout: 300
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
+      rescue:
+        - name: Display error information
+          ansible.builtin.debug:
+            msg:
+              - "=== AAP Controller Setup Failed ==="
+              - "Error occurred during configuration."
+              - ""
+              - "Quick troubleshooting:"
+              - "1. Verify AAP is running: curl -k {{ controller_host }}/api/v2/ping/"
+              - "2. Check credentials: {{ aap_admin_user }} / [password]"
+              - "3. Ensure SSH key exists: ls -la working/keys/bastion_managed_key"
+              - "4. Test manual login to AAP web interface"
+              - "5. Check project sync in AAP UI: Resources → Projects"
+              - ""
+              - "Variables file: working/aap-install/aap_controller_vars.yml"
 
-    - name: Test ping job template (optional validation)
-      ansible.controller.job_launch:
-        job_template: "Ping All Managed Nodes"
-        wait: false
-        controller_host: "{{ controller_host }}"
-        controller_username: "{{ controller_username }}"
-        controller_password: "{{ controller_password }}"
-        validate_certs: "{{ controller_verify_ssl }}"
-      register: validation_job
-      ignore_errors: true
-
-    - name: Display setup completion
-      ansible.builtin.debug:
-        msg:
-          - "=== AAP Controller Setup Complete ==="
-          - ""
-          - "✅ Credentials: Managed Nodes SSH Key"
-          - "✅ Execution Environment: Default EE"
-          - "✅ Project: Demo Playbooks"
-          - "✅ Inventory: Managed Infrastructure (2 hosts)"
-          - "✅ Job Templates: 3 essential templates"
-          - ""
-          - "🎯 Ready for Testing:"
-          - "1. Login to {{ controller_host }}"
-          - "2. Navigate to Templates"
-          - "3. Run 'Ping All Managed Nodes'"
-          - "4. Test other job templates"
-          - ""
-          - "💡 Next Steps:"
-          - "- Create custom playbooks in your own Git repository"
-          - "- Add projects pointing to your playbooks"
-          - "- Create job templates for your automation tasks"
-          - "- Set up schedules for recurring jobs"
-
-  rescue:
-    - name: Display error information
-      ansible.builtin.debug:
-        msg:
-          - "=== AAP Controller Setup Failed ==="
-          - "This setup encountered an error."
-          - ""
-          - "Quick troubleshooting:"
-          - "1. Verify AAP is running: curl -k {{ controller_host }}/api/v2/ping/"
-          - "2. Check credentials are correct"
-          - "3. Ensure SSH key exists: ls -la ./keys/bastion_managed_key"
-          - "4. Test manual login to AAP web interface"
-          - ""
-          - "For more help, check the AAP web interface logs"
-
-    - name: Fail with simple error message
-      ansible.builtin.fail:
-        msg: "AAP Controller provisioning failed. See troubleshooting steps above."
+        - name: Fail with error message
+          ansible.builtin.fail:
+            msg: "AAP Controller provisioning failed. See troubleshooting steps above."

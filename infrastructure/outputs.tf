@@ -75,21 +75,25 @@ output "inventory_files" {
     ssh_config          = local_file.ssh_config.filename
     aap_automation      = local_file.aap_automation_inventory.filename
     aap_install         = local_sensitive_file.aap_install_inventory.filename
+    aap_controller_vars = local_file.aap_controller_vars.filename
     test_playbook       = local_file.test_connections_playbook.filename
     inventory_readme    = local_file.inventory_readme.filename
     aap_install_readme  = local_file.aap_install_readme.filename
   }
 }
 
+# Updated quick_start_commands output
 output "quick_start_commands" {
-  description = "Quick start commands "
+  description = "Quick start commands for AAP setup"
   value = {
     test_connections = "ansible-playbook -i ../working/inventory/hosts.yml ../working/inventory/test_connections.yml"
     ssh_to_bastion   = "ssh -F ../working/inventory/ssh_config bastion"
     ssh_to_aap       = "ssh -F ../working/inventory/ssh_config aap"
     ssh_to_jump      = "ssh -F ../working/inventory/ssh_config jump"
     ping_all_hosts   = "ansible all -i ../working/inventory/hosts.yml -m ping"
-    install_aap_note = "# See ../working/aap-install/README.md for 5-step installation process"
+    transfer_aap_bundle = "ansible-playbook -i ../working/inventory/hosts.yml ../ansible/playbooks/transfer_aap_bundle.yml"
+    setup_aap_controller = "ansible-playbook -i ../working/inventory/hosts.yml ../ansible/provision_aap_controller.yml"
+    install_aap_note = "# See ../working/aap-install/README.md for installation process"
     access_aap       = "# After installation: open https://${local.aap_fqdn}"
   }
 }
