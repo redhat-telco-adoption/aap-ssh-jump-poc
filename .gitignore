@@ -24,3 +24,6 @@ Thumbs.db
 *.backup
 *.bak
 infrastructure/ansible.cfg
+
+ansible.cfg
+execution-environment/context/
