@@ -1,4 +1,17 @@
 ---
+- name: Verify Execution environment configuration
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check if /runner/.ssh/config exists
+      ansible.builtin.stat:
+        path: /runner/.ssh/config
+      register: ssh_config
+
+    - name: Print the ssh_config variable
+      ansible.builtin.debug:
+        var: ssh_config
+
 - name: Test connectivity to managed nodes
   hosts: all
   gather_facts: false
